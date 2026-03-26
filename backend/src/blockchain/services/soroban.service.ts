@@ -135,16 +135,59 @@ export class SorobanService {
     }
 
     const state = await job.getState();
+    const data = job.data as { transactionHash?: string };
 
     return {
       jobId: String(job.id),
-      transactionHash: job.data.transactionHash,
+      transactionHash: data.transactionHash,
       status: state as 'pending' | 'completed' | 'failed' | 'dlq',
       error: job.failedReason,
       retryCount: job.attemptsMade,
       createdAt: new Date(job.timestamp),
       completedAt: job.finishedOn ? new Date(job.finishedOn) : undefined,
     };
+  }
+
+  /**
+   * Check and atomically set callback event idempotency key.
+   * Rejects replayed callback events.
+   *
+   * @param eventId - Unique callback event ID
+   */
+  async checkAndSetCallbackIdempotency(eventId: string): Promise<boolean> {
+    return this.idempotencyService.checkAndSetIdempotencyKey(
+      `callback:${eventId}`,
+    );
+  }
+
+  /**
+   * Process an incoming blockchain callback via webhook.
+   * Ensures callback data is securely handled and logged.
+   *
+   * @param callback - Verified callback payload
+   */
+  async processWebhookCallback(callback: {
+    eventId: string;
+    transactionHash: string;
+    contractMethod: string;
+    status: 'pending' | 'confirmed' | 'failed';
+    timestamp: string;
+    details?: string;
+  }): Promise<void> {
+    this.logger.log(
+      `Processing blockchain callback event ${callback.eventId}`,
+      {
+        transactionHash: callback.transactionHash,
+        contractMethod: callback.contractMethod,
+        status: callback.status,
+        timestamp: callback.timestamp,
+      },
+    );
+
+    // TODO: map callback to persistent state or queue side effects.
+    // e.g., persist to database, update workflow state, or publish domain events.
+
+    await Promise.resolve();
   }
 
   /**

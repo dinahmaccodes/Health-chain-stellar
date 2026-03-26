@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /// <reference types="jest" />
 import { getQueueToken } from '@nestjs/bull';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -8,9 +9,18 @@ import { SorobanTxJob } from '../types/soroban-tx.types';
 
 describe('SorobanService', () => {
   let service: SorobanService;
-  let mockTxQueue: any;
-  let mockDlq: any;
-  let mockIdempotencyService: any;
+  let mockTxQueue: {
+    add: jest.Mock;
+    count: jest.Mock;
+    getFailedCount: jest.Mock;
+    getJob: jest.Mock;
+  };
+  let mockDlq: {
+    count: jest.Mock;
+  };
+  let mockIdempotencyService: {
+    checkAndSetIdempotencyKey: jest.Mock;
+  };
 
   beforeEach(async () => {
     mockTxQueue = {
@@ -397,6 +407,33 @@ describe('SorobanService', () => {
       expect(typeof metrics.queueDepth).toBe('number');
       expect(typeof metrics.failedJobs).toBe('number');
       expect(typeof metrics.dlqCount).toBe('number');
+    });
+  });
+
+  describe('callback idempotency', () => {
+    it('should check and set callback idempotency via IdempotencyService', async () => {
+      mockIdempotencyService.checkAndSetIdempotencyKey.mockResolvedValueOnce(
+        true,
+      );
+
+      const result = await service.checkAndSetCallbackIdempotency('evt-1');
+
+      expect(result).toBe(true);
+      expect(
+        mockIdempotencyService.checkAndSetIdempotencyKey,
+      ).toHaveBeenCalledWith('callback:evt-1');
+    });
+
+    it('should process webhook callback without error', async () => {
+      await expect(
+        service.processWebhookCallback({
+          eventId: 'evt-1',
+          transactionHash: 'tx-1',
+          contractMethod: 'register_blood',
+          status: 'confirmed',
+          timestamp: new Date().toISOString(),
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 });
