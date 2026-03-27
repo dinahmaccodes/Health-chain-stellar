@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { RedisModule } from '../redis/redis.module';
+import { IdempotencyModule } from '../common/idempotency/idempotency.module';
 import { UserActivityModule } from '../user-activity/user-activity.module';
 import { UserEntity } from '../users/entities/user.entity';
 
@@ -42,6 +43,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
       AuthSessionEntity,
     ]),
     RedisModule,
+    IdempotencyModule,
     UserActivityModule,
   ],
   controllers: [AuthController],

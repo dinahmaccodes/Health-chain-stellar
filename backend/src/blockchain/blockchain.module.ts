@@ -1,4 +1,4 @@
-import { BullModule } from '@nestjs/bull';
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 
 import { CompensationModule } from '../common/compensation/compensation.module';
@@ -8,6 +8,7 @@ import { AdminGuard } from './guards/admin.guard';
 import { SorobanDlqProcessor } from './processors/soroban-dlq.processor';
 import { SorobanTxProcessor } from './processors/soroban-tx.processor';
 import { IdempotencyService } from './services/idempotency.service';
+import { QueueMetricsService } from './services/queue-metrics.service';
 import { SorobanService } from './services/soroban.service';
 import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 
@@ -17,7 +18,7 @@ import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
     BullModule.registerQueue(
       {
         name: 'soroban-tx-queue',
-        redis: {
+        connection: {
           host: process.env.REDIS_HOST || 'localhost',
           port: parseInt(process.env.REDIS_PORT || '6379'),
         },
@@ -33,7 +34,7 @@ import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
       },
       {
         name: 'soroban-dlq',
-        redis: {
+        connection: {
           host: process.env.REDIS_HOST || 'localhost',
           port: parseInt(process.env.REDIS_PORT || '6379'),
         },

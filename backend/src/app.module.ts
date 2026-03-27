@@ -1,10 +1,7 @@
-import { BullModule as BullClassicModule } from '@nestjs/bull';
 import { BullModule } from '@nestjs/bullmq';
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-
-import { AppConfigModule } from './config/config.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -19,7 +16,9 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
+import { AppConfigModule } from './config/config.module';
 import { DispatchModule } from './dispatch/dispatch.module';
+import { LocationHistoryModule } from './location-history/location-history.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MapsModule } from './maps/maps.module';
@@ -28,11 +27,15 @@ import { OrdersModule } from './orders/orders.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { REDIS_CLIENT } from './redis/redis.constants';
 import { RedisModule } from './redis/redis.module';
+import { RetentionModule } from './retention/retention.module';
 import { RidersModule } from './riders/riders.module';
 import { throttleGetTracker } from './throttler/throttle-tracker.util';
 import { ActivityLoggingInterceptor } from './user-activity/interceptors/activity-logging.interceptor';
 import { UserActivityModule } from './user-activity/user-activity.module';
 import { UsersModule } from './users/users.module';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { CorrelationIdService } from './common/middleware/correlation-id.service';
+import { DatabaseSyncGuard } from './config/database-sync.guard';
 
 import type Redis from 'ioredis';
 
@@ -43,19 +46,24 @@ import type Redis from 'ioredis';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        host: configService.get<string>('DATABASE_HOST', 'localhost'),
-        port: configService.get<number>('DATABASE_PORT', 5432),
-        username: configService.get<string>('DATABASE_USERNAME', 'postgres'),
-        password: configService.get<string>('DATABASE_PASSWORD', ''),
-        database: configService.get<string>('DATABASE_NAME', 'healthchain'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize:
-          configService.get<string>('NODE_ENV', 'development') ===
-          'development',
-        logging: false,
-      }),
+      useFactory: (configService: ConfigService) => {
+        const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+        const synchronize = nodeEnv === 'development';
+
+        DatabaseSyncGuard.validateSynchronizeConfig(nodeEnv, synchronize);
+
+        return {
+          type: 'postgres',
+          host: configService.get<string>('DATABASE_HOST', 'localhost'),
+          port: configService.get<number>('DATABASE_PORT', 5432),
+          username: configService.get<string>('DATABASE_USERNAME', 'postgres'),
+          password: configService.get<string>('DATABASE_PASSWORD', ''),
+          database: configService.get<string>('DATABASE_NAME', 'healthchain'),
+          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          synchronize,
+          logging: false,
+        };
+      },
     }),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule, RedisModule],
@@ -88,6 +96,7 @@ import type Redis from 'ioredis';
     DispatchModule,
     MapsModule,
     BloodUnitsModule,
+    LocationHistoryModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -98,21 +107,13 @@ import type Redis from 'ioredis';
         },
       }),
     }),
-    BullClassicModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: configService.get<number>('REDIS_PORT', 6379),
-        },
-      }),
-    }),
     NotificationsModule,
     BlockchainModule,
     OrganizationsModule,
     BloodRequestsModule,
     UserActivityModule,
+    EventsModule,
+    RetentionModule,
   ],
   controllers: [AppController],
   providers: [
@@ -126,6 +127,11 @@ import type Redis from 'ioredis';
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
+    CorrelationIdService,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}

@@ -19,6 +19,8 @@ import { Permission } from '../auth/enums/permission.enum';
 import { PaginatedResponse } from '../common/pagination';
 
 import { OrderQueryParamsDto } from './dto/order-query-params.dto';
+import { OrdersResponseDto } from './dto/orders-response.dto';
+import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import { OrdersService } from './orders.service';
 import { Order } from './types/order.types';
 
@@ -105,11 +107,12 @@ export class OrdersController {
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
-    @Body('status') status: string,
+    @Body() statusUpdateDto: UpdateRequestStatusDto,
     @Request() req: any,
   ) {
     const actorId: string | undefined = req.user?.id;
-    return this.ordersService.updateStatus(id, status, actorId);
+    const actorRole: string | undefined = req.user?.role;
+    return this.ordersService.updateStatus(id, statusUpdateDto, actorId, actorRole);
   }
 
   @RequirePermissions(Permission.MANAGE_RIDERS)
@@ -121,29 +124,6 @@ export class OrdersController {
   ) {
     const actorId: string | undefined = req.user?.id;
     return this.ordersService.assignRider(id, riderId, actorId);
-  }
-
-  @RequirePermissions(Permission.UPDATE_ORDER)
-  @Patch(':id/raise-dispute')
-  raiseDispute(
-    @Param('id') id: string,
-    @Body('reason') reason: string,
-    @Body('disputeId') disputeId: string,
-    @Request() req: any,
-  ) {
-    const actorId: string | undefined = req.user?.id;
-    return this.ordersService.raiseDispute(id, reason, disputeId, actorId);
-  }
-
-  @RequirePermissions(Permission.UPDATE_ORDER) // Admin or specialized permission
-  @Patch(':id/resolve-dispute')
-  resolveDispute(
-    @Param('id') id: string,
-    @Body('resolution') resolution: string,
-    @Request() req: any,
-  ) {
-    const actorId: string | undefined = req.user?.id;
-    return this.ordersService.resolveDispute(id, resolution, actorId);
   }
 
   @RequirePermissions(Permission.DELETE_ORDER)

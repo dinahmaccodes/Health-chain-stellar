@@ -1,3 +1,4 @@
+import { Transform, Type } from 'class-transformer';
 import {
   IsString,
   IsNumber,
@@ -11,7 +12,6 @@ import {
   Matches,
   IsInt,
 } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
 
 /**
  * Canonical schema for all environment variables.
@@ -212,4 +212,22 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   INVENTORY_FORECAST_HISTORY_DAYS: number = 30;
+
+  // ─── Data Retention ───────────────────────────────────────────────────────
+
+  @IsOptional()
+  @IsString()
+  RETENTION_JOB_CRON: string = '0 2 * * *';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  RETENTION_SESSION_TTL_DAYS: number = 30;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  RETENTION_ACTIVITY_LOG_DAYS: number = 90;
 }
