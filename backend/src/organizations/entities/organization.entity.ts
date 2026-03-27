@@ -4,12 +4,10 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
-import { UserEntity } from '../../users/entities/user.entity';
 import { OrganizationType } from '../enums/organization-type.enum';
 import { OrganizationVerificationStatus } from '../enums/organization-verification-status.enum';
 import { VerificationStatus } from '../enums/verification-status.enum';
@@ -175,9 +173,6 @@ export class OrganizationEntity extends BaseEntity {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
-
-  @OneToMany(() => UserEntity, (user) => user.organization)
-  users!: UserEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

@@ -1,364 +1,362 @@
-import { RequestStatus } from '../enums/blood-request-status.enum';
-import { UrgencyLevel } from '../enums/urgency-level.enum';
-
-import { BloodRequestItemEntity } from './blood-request-item.entity';
-import { BloodRequestEntity } from './blood-request.entity';
-import { RequestStatusHistoryEntity } from './request-status-history.entity';
+import { BloodRequestEntity, Urgency } from './blood-request.entity';
+import { BloodRequestStatus } from '../enums/blood-request-status.enum';
+import { BloodType } from '../../blood-units/enums/blood-type.enum';
+import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
 
 describe('BloodRequestEntity', () => {
-  it('should create a BloodRequest instance with required fields', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-1';
-    request.requestNumber = 'BR-1234567890-ABC123';
-    request.hospitalId = 'hospital-uuid-1';
-    request.requiredBy = new Date('2026-03-28T14:00:00Z');
-    request.status = RequestStatus.PENDING;
-    request.urgencyLevel = UrgencyLevel.ROUTINE;
-    request.statusUpdatedAt = new Date();
+  let bloodRequest: BloodRequestEntity;
 
-    expect(request.requestNumber).toBe('BR-1234567890-ABC123');
-    expect(request.hospitalId).toBe('hospital-uuid-1');
-    expect(request.status).toBe(RequestStatus.PENDING);
-    expect(request.urgencyLevel).toBe(UrgencyLevel.ROUTINE);
+  beforeEach(() => {
+    bloodRequest = new BloodRequestEntity();
+    bloodRequest.id = 'test-id';
+    bloodRequest.requestNumber = 'BR-001';
+    bloodRequest.hospitalId = 'hospital-001';
+    bloodRequest.bloodType = BloodType.A_POSITIVE;
+    bloodRequest.component = BloodComponent.WHOLE_BLOOD;
+    bloodRequest.quantityMl = 500;
+    bloodRequest.urgency = Urgency.ROUTINE;
+    bloodRequest.createdTimestamp = Math.floor(Date.now() / 1000);
+    bloodRequest.requiredByTimestamp = bloodRequest.createdTimestamp + 24 * 60 * 60; // 24 hours later
+    bloodRequest.status = BloodRequestStatus.PENDING;
+    bloodRequest.assignedUnits = [];
+    bloodRequest.fulfilledQuantityMl = 0;
+    bloodRequest.deliveryAddress = '123 Hospital St';
+    bloodRequest.notes = 'Urgent need for surgery';
+    bloodRequest.blockchainTxHash = null;
+    bloodRequest.createdByUserId = 'user-001';
+    bloodRequest.items = [];
+    bloodRequest.createdAt = new Date();
+    bloodRequest.updatedAt = new Date();
   });
 
-  it('should accept all RequestStatus enum values', () => {
-    const request = new BloodRequestEntity();
-    const statuses = [
-      RequestStatus.PENDING,
-      RequestStatus.MATCHED,
-      RequestStatus.APPROVED,
-      RequestStatus.IN_TRANSIT,
-      RequestStatus.PARTIALLY_FULFILLED,
-      RequestStatus.FULFILLED,
-      RequestStatus.CANCELLED,
-      RequestStatus.REJECTED,
-      RequestStatus.EXPIRED,
-    ];
+  describe('isFulfilled', () => {
+    it('should return false when fulfilled quantity is less than requested', () => {
+      bloodRequest.fulfilledQuantityMl = 300;
+      expect(bloodRequest.isFulfilled()).toBe(false);
+    });
 
-    for (const status of statuses) {
-      request.status = status;
-      expect(request.status).toBe(status);
-    }
+    it('should return true when fulfilled quantity equals requested', () => {
+      bloodRequest.fulfilledQuantityMl = 500;
+      expect(bloodRequest.isFulfilled()).toBe(true);
+    });
+
+    it('should return true when fulfilled quantity exceeds requested', () => {
+      bloodRequest.fulfilledQuantityMl = 600;
+      expect(bloodRequest.isFulfilled()).toBe(true);
+    });
   });
 
-  it('should accept all UrgencyLevel enum values', () => {
-    const request = new BloodRequestEntity();
-    const urgencyLevels = [
-      UrgencyLevel.CRITICAL,
-      UrgencyLevel.URGENT,
-      UrgencyLevel.ROUTINE,
-      UrgencyLevel.SCHEDULED,
-    ];
+  describe('timeRemaining', () => {
+    it('should return positive time when not yet required', () => {
+      const currentTimestamp = bloodRequest.createdTimestamp + 12 * 60 * 60; // 12 hours later
+      const remaining = bloodRequest.timeRemaining(currentTimestamp);
+      expect(remaining).toBeGreaterThan(0);
+    });
 
-    for (const urgency of urgencyLevels) {
-      request.urgencyLevel = urgency;
-      expect(request.urgencyLevel).toBe(urgency);
-    }
+    it('should return 0 when past required time', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp + 1000;
+      const remaining = bloodRequest.timeRemaining(currentTimestamp);
+      expect(remaining).toBe(0);
+    });
   });
 
-  it('should track SLA deadline fields for critical requests', () => {
-    const request = new BloodRequestEntity();
-    request.urgencyLevel = UrgencyLevel.CRITICAL;
-    const now = new Date();
-    const slaResponseDue = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour
+  describe('isOverdue', () => {
+    it('should return false when not yet required and not fulfilled', () => {
+      const currentTimestamp = bloodRequest.createdTimestamp + 12 * 60 * 60;
+      expect(bloodRequest.isOverdue(currentTimestamp)).toBe(false);
+    });
 
-    request.slaResponseDueAt = slaResponseDue;
-    expect(request.slaResponseDueAt).toBeDefined();
-    expect(request.slaResponseDueAt?.getTime()).toBeLessThanOrEqual(
-      new Date(now.getTime() + 90 * 60 * 1000).getTime(),
-    );
+    it('should return true when past required time and not fulfilled', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp + 1000;
+      expect(bloodRequest.isOverdue(currentTimestamp)).toBe(true);
+    });
+
+    it('should return false when past required time but fulfilled', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp + 1000;
+      bloodRequest.fulfilledQuantityMl = 500;
+      expect(bloodRequest.isOverdue(currentTimestamp)).toBe(false);
+    });
   });
 
-  it('should store lifecycle timestamps', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-2';
-    request.requestNumber = 'BR-test-001';
-    request.status = RequestStatus.PENDING;
-    request.statusUpdatedAt = new Date();
+  describe('getUrgencyLevel', () => {
+    it('should return CRITICAL when less than 2 hours remaining', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp - 1 * 60 * 60; // 1 hour remaining
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.CRITICAL);
+    });
 
-    expect(request.statusUpdatedAt).toBeDefined();
-    expect(request.createdAt).toBeUndefined(); // Not set until persisted
+    it('should return URGENT when 2-6 hours remaining', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp - 4 * 60 * 60; // 4 hours remaining
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.URGENT);
+    });
+
+    it('should return ROUTINE when 6-24 hours remaining', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp - 12 * 60 * 60; // 12 hours remaining
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.ROUTINE);
+    });
+
+    it('should return SCHEDULED when more than 24 hours remaining', () => {
+      const currentTimestamp = bloodRequest.requiredByTimestamp - 48 * 60 * 60; // 48 hours remaining
+      expect(bloodRequest.getUrgencyLevel(currentTimestamp)).toBe(Urgency.SCHEDULED);
+    });
   });
 
-  it('should accept state transition timestamps', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-3';
-    request.status = RequestStatus.MATCHED;
-    request.matchedAt = new Date('2026-03-27T10:00:00Z');
+  describe('validate', () => {
+    it('should return valid for a correct blood request', () => {
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
 
-    request.status = RequestStatus.APPROVED;
-    request.approvedAt = new Date('2026-03-27T11:00:00Z');
+    it('should return invalid when quantity is 0', () => {
+      bloodRequest.quantityMl = 0;
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Quantity must be greater than 0');
+    });
 
-    request.status = RequestStatus.FULFILLED;
-    request.fulfilledAt = new Date('2026-03-27T12:00:00Z');
+    it('should return invalid when quantity is negative', () => {
+      bloodRequest.quantityMl = -100;
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Quantity must be greater than 0');
+    });
 
-    expect(request.matchedAt).toBeDefined();
-    expect(request.approvedAt).toBeDefined();
-    expect(request.fulfilledAt).toBeDefined();
+    it('should return invalid when required by timestamp is before creation', () => {
+      bloodRequest.requiredByTimestamp = bloodRequest.createdTimestamp - 1000;
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Required by timestamp must be after creation timestamp');
+    });
+
+    it('should return invalid for invalid blood type', () => {
+      (bloodRequest as any).bloodType = 'INVALID';
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Invalid blood type');
+    });
+
+    it('should return invalid for invalid component', () => {
+      (bloodRequest as any).component = 'INVALID';
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Invalid blood component');
+    });
+
+    it('should return invalid for invalid urgency', () => {
+      (bloodRequest as any).urgency = 'INVALID';
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Invalid urgency level');
+    });
+
+    it('should return invalid for invalid status', () => {
+      (bloodRequest as any).status = 'INVALID';
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Invalid request status');
+    });
+
+    it('should return invalid when fulfilled quantity is negative', () => {
+      bloodRequest.fulfilledQuantityMl = -100;
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Fulfilled quantity cannot be negative');
+    });
+
+    it('should return invalid when fulfilled quantity exceeds requested', () => {
+      bloodRequest.fulfilledQuantityMl = 600;
+      const result = bloodRequest.validate();
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Fulfilled quantity cannot exceed requested quantity');
+    });
   });
 
-  it('should store blockchain reference fields', () => {
-    const request = new BloodRequestEntity();
-    request.blockchainRequestId = 'stellar-req-123';
-    request.blockchainNetwork = 'stellar';
-    request.blockchainTxHash = '0xabc123def456';
-    request.blockchainConfirmedAt = new Date();
+  describe('getFulfillmentProgress', () => {
+    it('should return correct progress when partially fulfilled', () => {
+      bloodRequest.fulfilledQuantityMl = 250;
+      const progress = bloodRequest.getFulfillmentProgress();
+      expect(progress.requestedMl).toBe(500);
+      expect(progress.fulfilledMl).toBe(250);
+      expect(progress.remainingMl).toBe(250);
+      expect(progress.percentage).toBe(50);
+    });
 
-    expect(request.blockchainRequestId).toBe('stellar-req-123');
-    expect(request.blockchainNetwork).toBe('stellar');
-    expect(request.blockchainTxHash).toBe('0xabc123def456');
-    expect(request.blockchainConfirmedAt).toBeDefined();
+    it('should return 100% when fully fulfilled', () => {
+      bloodRequest.fulfilledQuantityMl = 500;
+      const progress = bloodRequest.getFulfillmentProgress();
+      expect(progress.percentage).toBe(100);
+    });
+
+    it('should return 0% when not fulfilled', () => {
+      bloodRequest.fulfilledQuantityMl = 0;
+      const progress = bloodRequest.getFulfillmentProgress();
+      expect(progress.percentage).toBe(0);
+    });
   });
 
-  it('should store delivery details', () => {
-    const request = new BloodRequestEntity();
-    request.deliveryAddress = '123 Hospital Lane';
-    request.deliveryContactName = 'Dr. Smith';
-    request.deliveryContactPhone = '+234-8012345678';
-    request.deliveryInstructions = 'Ring bell at main entrance';
-    request.deliveryWindowStart = new Date('2026-03-28T08:00:00Z');
-    request.deliveryWindowEnd = new Date('2026-03-28T17:00:00Z');
+  describe('addFulfilledQuantity', () => {
+    it('should add quantity to fulfilled', () => {
+      bloodRequest.addFulfilledQuantity(200);
+      expect(bloodRequest.fulfilledQuantityMl).toBe(200);
+    });
 
-    expect(request.deliveryAddress).toBe('123 Hospital Lane');
-    expect(request.deliveryContactName).toBe('Dr. Smith');
-    expect(request.deliveryContactPhone).toBe('+234-8012345678');
-    expect(request.deliveryInstructions).toBeDefined();
-    expect(request.deliveryWindowStart).toBeDefined();
-    expect(request.deliveryWindowEnd).toBeDefined();
+    it('should not exceed requested quantity', () => {
+      bloodRequest.addFulfilledQuantity(600);
+      expect(bloodRequest.fulfilledQuantityMl).toBe(500);
+    });
+
+    it('should handle multiple additions', () => {
+      bloodRequest.addFulfilledQuantity(200);
+      bloodRequest.addFulfilledQuantity(200);
+      expect(bloodRequest.fulfilledQuantityMl).toBe(400);
+    });
   });
 
-  it('should allow optional cancellation and rejection timestamps', () => {
-    const request = new BloodRequestEntity();
-    request.status = RequestStatus.CANCELLED;
-    request.cancelledAt = new Date('2026-03-27T15:00:00Z');
+  describe('assignUnit', () => {
+    it('should add unit to assigned units', () => {
+      bloodRequest.assignUnit('unit-001');
+      expect(bloodRequest.assignedUnits).toContain('unit-001');
+    });
 
-    expect(request.cancelledAt).toBeDefined();
+    it('should not add duplicate units', () => {
+      bloodRequest.assignUnit('unit-001');
+      bloodRequest.assignUnit('unit-001');
+      expect(bloodRequest.assignedUnits?.length).toBe(1);
+    });
 
-    const request2 = new BloodRequestEntity();
-    request2.status = RequestStatus.REJECTED;
-    request2.rejectedAt = new Date('2026-03-27T16:00:00Z');
-    expect(request2.rejectedAt).toBeDefined();
+    it('should initialize array if null', () => {
+      bloodRequest.assignedUnits = null;
+      bloodRequest.assignUnit('unit-001');
+      expect(bloodRequest.assignedUnits).toContain('unit-001');
+    });
   });
 
-  it('should support multi-item requests with One-to-Many relationship', () => {
-    const request = new BloodRequestEntity();
-    request.items = [
-      {
-        id: 'item-1',
-        requestId: 'req-uuid-1',
-        bloodBankId: 'bank-1',
-        bloodType: 'A+',
-        quantity: 2,
-        fulfilledQuantity: 0,
-        request,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      {
-        id: 'item-2',
-        requestId: 'req-uuid-1',
-        bloodBankId: 'bank-2',
-        bloodType: 'O-',
-        quantity: 3,
-        fulfilledQuantity: 0,
-        request,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ];
+  describe('removeUnit', () => {
+    it('should remove unit from assigned units', () => {
+      bloodRequest.assignedUnits = ['unit-001', 'unit-002'];
+      bloodRequest.removeUnit('unit-001');
+      expect(bloodRequest.assignedUnits).not.toContain('unit-001');
+      expect(bloodRequest.assignedUnits).toContain('unit-002');
+    });
 
-    expect(request.items).toHaveLength(2);
-    expect(request.items[0].bloodType).toBe('A+');
-    expect(request.items[1].bloodType).toBe('O-');
+    it('should handle null assigned units', () => {
+      bloodRequest.assignedUnits = null;
+      expect(() => bloodRequest.removeUnit('unit-001')).not.toThrow();
+    });
   });
 
-  it('should extend BaseEntity with id, createdAt, updatedAt', () => {
-    const request = new BloodRequestEntity();
-    expect(request).toHaveProperty('id');
-    expect(request).toHaveProperty('createdAt');
-    expect(request).toHaveProperty('updatedAt');
-  });
-});
+  describe('isUnitAssigned', () => {
+    it('should return true when unit is assigned', () => {
+      bloodRequest.assignedUnits = ['unit-001', 'unit-002'];
+      expect(bloodRequest.isUnitAssigned('unit-001')).toBe(true);
+    });
 
-describe('BloodRequestItemEntity', () => {
-  it('should create a RequestItem instance for a multi-item request', () => {
-    const item = new BloodRequestItemEntity();
-    item.id = 'item-uuid-1';
-    item.requestId = 'req-uuid-1';
-    item.bloodBankId = 'bank-1';
-    item.bloodType = 'AB+';
-    item.quantity = 4;
-    item.fulfilledQuantity = 0;
+    it('should return false when unit is not assigned', () => {
+      bloodRequest.assignedUnits = ['unit-001', 'unit-002'];
+      expect(bloodRequest.isUnitAssigned('unit-003')).toBe(false);
+    });
 
-    expect(item.bloodType).toBe('AB+');
-    expect(item.quantity).toBe(4);
-    expect(item.fulfilledQuantity).toBe(0);
+    it('should return false when assigned units is null', () => {
+      bloodRequest.assignedUnits = null;
+      expect(bloodRequest.isUnitAssigned('unit-001')).toBe(false);
+    });
   });
 
-  it('should track fulfilled quantity separately from requested quantity', () => {
-    const item = new BloodRequestItemEntity();
-    item.quantity = 5;
-    item.fulfilledQuantity = 3;
+  describe('getAssignedUnitsCount', () => {
+    it('should return correct count', () => {
+      bloodRequest.assignedUnits = ['unit-001', 'unit-002', 'unit-003'];
+      expect(bloodRequest.getAssignedUnitsCount()).toBe(3);
+    });
 
-    expect(item.quantity).toBe(5);
-    expect(item.fulfilledQuantity).toBe(3);
+    it('should return 0 when null', () => {
+      bloodRequest.assignedUnits = null;
+      expect(bloodRequest.getAssignedUnitsCount()).toBe(0);
+    });
   });
 
-  it('should link to a parent BloodRequest via ManyToOne', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-1';
-    request.requestNumber = 'BR-test-001';
-
-    const item = new BloodRequestItemEntity();
-    item.requestId = 'req-uuid-1';
-    item.request = request;
-
-    expect(item.request).toBe(request);
-    expect(item.requestId).toBe('req-uuid-1');
-  });
-});
-
-describe('RequestStatusHistoryEntity', () => {
-  it('should create a status history record for state transitions', () => {
-    const history = new RequestStatusHistoryEntity();
-    history.id = 'history-uuid-1';
-    history.requestId = 'req-uuid-1';
-    history.previousStatus = RequestStatus.PENDING;
-    history.newStatus = RequestStatus.MATCHED;
-    history.reason = 'Blood units matched with inventory';
-    history.changedByUserId = 'user-uuid-1';
-
-    expect(history.previousStatus).toBe(RequestStatus.PENDING);
-    expect(history.newStatus).toBe(RequestStatus.MATCHED);
-    expect(history.reason).toBeDefined();
+  describe('updateStatus', () => {
+    it('should update the status', () => {
+      bloodRequest.updateStatus(BloodRequestStatus.FULFILLED);
+      expect(bloodRequest.status).toBe(BloodRequestStatus.FULFILLED);
+    });
   });
 
-  it('should support null previousStatus for initial creation', () => {
-    const history = new RequestStatusHistoryEntity();
-    history.previousStatus = null;
-    history.newStatus = RequestStatus.PENDING;
-    history.reason = 'Request created';
+  describe('markAsFulfilled', () => {
+    it('should set status to FULFILLED', () => {
+      bloodRequest.markAsFulfilled();
+      expect(bloodRequest.status).toBe(BloodRequestStatus.FULFILLED);
+    });
 
-    expect(history.previousStatus).toBeNull();
-    expect(history.newStatus).toBe(RequestStatus.PENDING);
+    it('should set fulfilled quantity to requested quantity', () => {
+      bloodRequest.markAsFulfilled();
+      expect(bloodRequest.fulfilledQuantityMl).toBe(500);
+    });
   });
 
-  it('should record who made status changes', () => {
-    const history = new RequestStatusHistoryEntity();
-    history.changedByUserId = 'admin-user-uuid';
-    history.previousStatus = RequestStatus.MATCHED;
-    history.newStatus = RequestStatus.APPROVED;
-
-    expect(history.changedByUserId).toBe('admin-user-uuid');
+  describe('markAsCancelled', () => {
+    it('should set status to CANCELLED', () => {
+      bloodRequest.markAsCancelled();
+      expect(bloodRequest.status).toBe(BloodRequestStatus.CANCELLED);
+    });
   });
 
-  it('should accept multiple state transitions in sequence', () => {
-    const history1 = new RequestStatusHistoryEntity();
-    history1.previousStatus = null;
-    history1.newStatus = RequestStatus.PENDING;
-
-    const history2 = new RequestStatusHistoryEntity();
-    history2.previousStatus = RequestStatus.PENDING;
-    history2.newStatus = RequestStatus.MATCHED;
-
-    const history3 = new RequestStatusHistoryEntity();
-    history3.previousStatus = RequestStatus.MATCHED;
-    history3.newStatus = RequestStatus.APPROVED;
-
-    expect(history1.newStatus).toBe(RequestStatus.PENDING);
-    expect(history2.previousStatus).toBe(RequestStatus.PENDING);
-    expect(history2.newStatus).toBe(RequestStatus.MATCHED);
-    expect(history3.previousStatus).toBe(RequestStatus.MATCHED);
+  describe('getSummary', () => {
+    it('should return a summary object', () => {
+      const currentTimestamp = bloodRequest.createdTimestamp + 12 * 60 * 60;
+      const summary = bloodRequest.getSummary(currentTimestamp);
+      expect(summary).toHaveProperty('id', bloodRequest.id);
+      expect(summary).toHaveProperty('requestNumber', bloodRequest.requestNumber);
+      expect(summary).toHaveProperty('hospitalId', bloodRequest.hospitalId);
+      expect(summary).toHaveProperty('bloodType', bloodRequest.bloodType);
+      expect(summary).toHaveProperty('component', bloodRequest.component);
+      expect(summary).toHaveProperty('quantityMl', bloodRequest.quantityMl);
+      expect(summary).toHaveProperty('urgency', bloodRequest.urgency);
+      expect(summary).toHaveProperty('status', bloodRequest.status);
+      expect(summary).toHaveProperty('requiredByTimestamp', bloodRequest.requiredByTimestamp);
+      expect(summary).toHaveProperty('timeRemainingSeconds');
+      expect(summary).toHaveProperty('isOverdue');
+      expect(summary).toHaveProperty('isFulfilled');
+      expect(summary).toHaveProperty('fulfillmentProgress');
+      expect(summary).toHaveProperty('assignedUnitsCount');
+      expect(summary).toHaveProperty('createdAt');
+    });
   });
 
-  it('should link to a BloodRequest via ManyToOne', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-1';
-    request.requestNumber = 'BR-test-001';
+  describe('equals', () => {
+    it('should return true for same id', () => {
+      const other = new BloodRequestEntity();
+      other.id = bloodRequest.id;
+      expect(bloodRequest.equals(other)).toBe(true);
+    });
 
-    const history = new RequestStatusHistoryEntity();
-    history.requestId = 'req-uuid-1';
-    history.request = request;
-
-    expect(history.request).toBe(request);
-    expect(history.requestId).toBe('req-uuid-1');
+    it('should return false for different id', () => {
+      const other = new BloodRequestEntity();
+      other.id = 'different-id';
+      expect(bloodRequest.equals(other)).toBe(false);
+    });
   });
 
-  it('should extend BaseEntity with id, createdAt, updatedAt', () => {
-    const history = new RequestStatusHistoryEntity();
-    expect(history).toHaveProperty('id');
-    expect(history).toHaveProperty('createdAt');
-    expect(history).toHaveProperty('updatedAt');
-  });
-});
-
-describe('BloodRequest Workflow Integration', () => {
-  it('should support complete request lifecycle with history audit trail', () => {
-    const request = new BloodRequestEntity();
-    request.id = 'req-uuid-complete';
-    request.requestNumber = 'BR-lifecycle-001';
-    request.hospitalId = 'hospital-1';
-    request.status = RequestStatus.PENDING;
-    request.urgencyLevel = UrgencyLevel.CRITICAL;
-
-    const history: RequestStatusHistoryEntity[] = [];
-
-    // Initial creation
-    const h1 = new RequestStatusHistoryEntity();
-    h1.requestId = request.id;
-    h1.previousStatus = null;
-    h1.newStatus = RequestStatus.PENDING;
-    h1.reason = 'Request created';
-    history.push(h1);
-
-    request.status = RequestStatus.MATCHED;
-    request.matchedAt = new Date();
-    const h2 = new RequestStatusHistoryEntity();
-    h2.requestId = request.id;
-    h2.previousStatus = RequestStatus.PENDING;
-    h2.newStatus = RequestStatus.MATCHED;
-    h2.reason = 'Blood units matched';
-    history.push(h2);
-
-    request.status = RequestStatus.APPROVED;
-    request.approvedAt = new Date();
-    const h3 = new RequestStatusHistoryEntity();
-    h3.requestId = request.id;
-    h3.previousStatus = RequestStatus.MATCHED;
-    h3.newStatus = RequestStatus.APPROVED;
-    h3.reason = 'Request approved by admin';
-    history.push(h3);
-
-    request.status = RequestStatus.FULFILLED;
-    request.fulfilledAt = new Date();
-    const h4 = new RequestStatusHistoryEntity();
-    h4.requestId = request.id;
-    h4.previousStatus = RequestStatus.APPROVED;
-    h4.newStatus = RequestStatus.FULFILLED;
-    h4.reason = 'All items delivered';
-    history.push(h4);
-
-    request.statusHistory = history;
-
-    expect(request.status).toBe(RequestStatus.FULFILLED);
-    expect(request.statusHistory).toHaveLength(4);
-    expect(request.statusHistory[0].newStatus).toBe(RequestStatus.PENDING);
-    expect(request.statusHistory[3].newStatus).toBe(RequestStatus.FULFILLED);
-  });
-
-  it('should validate urgent request SLA expectations', () => {
-    const request = new BloodRequestEntity();
-    request.urgencyLevel = UrgencyLevel.URGENT;
-
-    // URGENT = 4 hours response time
-    const now = new Date();
-    const slaResponseDue = new Date(now.getTime() + 4 * 60 * 60 * 1000);
-    request.slaResponseDueAt = slaResponseDue;
-
-    const timeDiffHours =
-      (request.slaResponseDueAt.getTime() - now.getTime()) / (60 * 60 * 1000);
-    expect(timeDiffHours).toBeGreaterThanOrEqual(3.9);
-    expect(timeDiffHours).toBeLessThanOrEqual(4.1);
+  describe('toJSON', () => {
+    it('should return a plain object representation', () => {
+      const json = bloodRequest.toJSON();
+      expect(json).toHaveProperty('id', bloodRequest.id);
+      expect(json).toHaveProperty('requestNumber', bloodRequest.requestNumber);
+      expect(json).toHaveProperty('hospitalId', bloodRequest.hospitalId);
+      expect(json).toHaveProperty('bloodType', bloodRequest.bloodType);
+      expect(json).toHaveProperty('component', bloodRequest.component);
+      expect(json).toHaveProperty('quantityMl', bloodRequest.quantityMl);
+      expect(json).toHaveProperty('urgency', bloodRequest.urgency);
+      expect(json).toHaveProperty('createdTimestamp', bloodRequest.createdTimestamp);
+      expect(json).toHaveProperty('requiredByTimestamp', bloodRequest.requiredByTimestamp);
+      expect(json).toHaveProperty('status', bloodRequest.status);
+      expect(json).toHaveProperty('assignedUnits', bloodRequest.assignedUnits);
+      expect(json).toHaveProperty('fulfilledQuantityMl', bloodRequest.fulfilledQuantityMl);
+      expect(json).toHaveProperty('deliveryAddress', bloodRequest.deliveryAddress);
+      expect(json).toHaveProperty('notes', bloodRequest.notes);
+      expect(json).toHaveProperty('blockchainTxHash', bloodRequest.blockchainTxHash);
+      expect(json).toHaveProperty('createdByUserId', bloodRequest.createdByUserId);
+      expect(json).toHaveProperty('createdAt');
+      expect(json).toHaveProperty('updatedAt');
+    });
   });
 });

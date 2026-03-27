@@ -10,7 +10,8 @@ import { BloodRequestsController } from './blood-requests.controller';
 import { BloodRequestsService } from './blood-requests.service';
 import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
 import { BloodRequestEntity } from './entities/blood-request.entity';
-import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
+import { RequestQueryService } from './services/request-query.service';
+import { RequestQueryController } from './controllers/request-query.controller';
 
 @Module({
   imports: [
@@ -24,8 +25,8 @@ import { RequestStatusHistoryEntity } from './entities/request-status-history.en
     NotificationsModule,
     CompensationModule,
   ],
-  controllers: [BloodRequestsController],
-  providers: [BloodRequestsService],
-  exports: [BloodRequestsService],
+  controllers: [BloodRequestsController, RequestQueryController],
+  providers: [BloodRequestsService, RequestQueryService],
+  exports: [BloodRequestsService, RequestQueryService],
 })
 export class BloodRequestsModule {}

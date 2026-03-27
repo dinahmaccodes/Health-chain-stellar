@@ -62,7 +62,11 @@ describe('InventoryForecasting Integration (SQLite)', () => {
 
   const mockConfigService = {
     get: jest.fn((key: string, defaultValue?: number) => {
-      return key in configValues ? configValues[key] : defaultValue;
+      const config: Record<string, number> = {
+        INVENTORY_FORECAST_THRESHOLD_DAYS: 3,
+        INVENTORY_FORECAST_HISTORY_DAYS: 30,
+      };
+      return config[key] ?? defaultValue;
     }),
   };
 
