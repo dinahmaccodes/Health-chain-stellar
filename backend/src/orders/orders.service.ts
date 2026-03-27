@@ -46,6 +46,8 @@ export class OrdersService {
   private readonly orders: Order[] = [];
 
   constructor(
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     @InjectRepository(OrderEntity)
     private readonly orderRepo: Repository<OrderEntity>,
     private readonly stateMachine: OrderStateMachine,
@@ -342,7 +344,12 @@ export class OrdersService {
     }
 
     try {
-      const updated = await this.orderRepo.save(order);
+      const updated = await this.dataSource.transaction(async (manager) => {
+        await this.requestStatusService.applyStatusUpdate(
+          order, dto, actorId, actorRole, manager,
+        );
+        return manager.save(OrderEntity, order);
+      });
       return { message: 'Order status updated successfully', data: updated };
     } catch (err) {
       if (err instanceof OptimisticLockVersionMismatchError) {
@@ -361,12 +368,16 @@ export class OrdersService {
    */
   async remove(id: string, actorId?: string) {
     const order = await this.findOrderOrFail(id);
-    await this.requestStatusService.applyStatusUpdate(
-      order,
-      { action: RequestStatusAction.CANCEL },
-      actorId,
-    );
-    await this.orderRepo.save(order);
+    await this.dataSource.transaction(async (manager) => {
+      await this.requestStatusService.applyStatusUpdate(
+        order,
+        { action: RequestStatusAction.CANCEL },
+        actorId,
+        undefined,
+        manager,
+      );
+      await manager.save(OrderEntity, order);
+    });
     return { message: 'Order cancelled successfully', data: { id } };
   }
 
