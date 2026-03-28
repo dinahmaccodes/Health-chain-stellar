@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -19,6 +20,8 @@ import { BloodUnitsModule } from './blood-units/blood-units.module';
 import { EventsModule } from './events/events.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
+import { LoggerModule } from './common/logger/logger.module';
+import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { DispatchModule } from './dispatch/dispatch.module';
@@ -39,6 +42,7 @@ import type Redis from 'ioredis';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
+    LoggerModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -69,7 +73,7 @@ import type Redis from 'ioredis';
     AnomalyModule,
     BatchImportModule,
     WorkflowModule,
-  ]
+  ],
   controllers: [AppController],
   providers: [
     AppService,
@@ -82,6 +86,8 @@ import type Redis from 'ioredis';
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
+    /** HTTP request/response logging with correlation IDs */
+    { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
     CorrelationIdService,
   ],
 })
