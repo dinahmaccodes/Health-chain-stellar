@@ -193,6 +193,18 @@ export class EnvironmentVariables {
   THROTTLE_LIMIT: number = 100;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  THROTTLE_AUTH_TTL: number = 60;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  THROTTLE_AUTH_LIMIT: number = 10;
+
+  @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   THROTTLER_USE_REDIS: boolean = true;
