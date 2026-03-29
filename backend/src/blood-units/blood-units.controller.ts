@@ -99,6 +99,39 @@ export class BloodUnitsController {
     return this.bloodUnitsService.getUnitTrail(id);
   }
 
+  /**
+   * INTER-ORG TRANSFER: Step 1: Initiate
+   */
+  @RequirePermissions(Permission.TRANSFER_CUSTODY)
+  @Post(':id/transfer')
+  @HttpCode(HttpStatus.CREATED)
+  async initiateTransfer(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { destinationOrgId: string; reason?: string },
+    @Req() request: Request & { user: { id: string; role: string; organizationId?: string } },
+  ) {
+    return this.bloodUnitsService.initiateOrganizationTransfer(
+      id,
+      body.destinationOrgId,
+      body.reason,
+      request.user,
+    );
+  }
+
+  /**
+   * INTER-ORG TRANSFER: Step 2: Accept
+   */
+  @RequirePermissions(Permission.TRANSFER_CUSTODY)
+  @Post(':id/transfer/accept')
+  @HttpCode(HttpStatus.OK)
+  async acceptTransfer(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() request: Request & { user: { id: string; role: string; organizationId?: string } },
+  ) {
+    return this.bloodUnitsService.acceptOrganizationTransfer(id, request.user);
+  }
+
+
   @RequirePermissions(Permission.UPDATE_BLOOD_STATUS)
   @Patch(':id/status')
   @HttpCode(HttpStatus.OK)

@@ -6,9 +6,9 @@ import {
   UpdateDateColumn,
   OneToMany,
   Index,
-  OneToMany,
   BaseEntity,
 } from 'typeorm';
+
 
 import { BloodComponent } from '../enums/blood-component.enum';
 import { BloodStatus } from '../enums/blood-status.enum';
@@ -69,7 +69,11 @@ export class BloodUnitEntity {
 @Index('idx_blood_units_organization', ['organizationId'])
 @Index('idx_blood_units_expiry', ['expiresAt'])
 export class BloodUnit extends BaseEntity {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
   @Column({ name: 'unit_code', type: 'varchar', unique: true })
+
   unitCode: string;
 
   @Column({
@@ -137,12 +141,22 @@ export class BloodUnit extends BaseEntity {
   })
   statusHistory: BloodStatusHistory[];
 
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, unknown> | null;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
+
   /**
    * Check if the blood unit has expired
    */
   isExpired(): boolean {
     return new Date() > this.expiresAt;
   }
+
 
   /**
    * Check if the blood unit is available for use
@@ -357,3 +371,9 @@ export class BloodUnit extends BaseEntity {
     };
   }
 }
+
+export interface BloodUnitValidationResult {
+  isValid: boolean;
+  errors: string[];
+}
+
