@@ -3,6 +3,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, String,
     Vec,
 };
+use soroban_sdk::token;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,7 @@ pub enum Error {
     SamePayerPayee = 502,
     InvalidPage = 503,
     NotPledgeDonor = 504,
+    InsufficientEscrowFunds = 505,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -252,6 +254,7 @@ impl PaymentContract {
             status: PaymentStatus::Locked,
             created_at: now,
             updated_at: now,
+            dispute_metadata: None,
         };
 
         store_payment(&env, &payment);

@@ -1726,6 +1726,13 @@ impl HealthChainContract {
             payee,
             amount,
             asset,
+            fee_structure: FeeStructure {
+                policy_id: Symbol::new(&env, "default_fee_policy"),
+                service_fee: 0,
+                network_fee: 0,
+                performance_bonus: 0,
+                fixed_fee: 0,
+            },
             status: PaymentStatus::Pending,
             escrow_released_at: None,
         };

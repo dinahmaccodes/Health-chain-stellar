@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
-    String, Vec,
+    String, Symbol, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -494,7 +494,7 @@ impl IdentityContract {
 
         // Emit event
         env.events().publish(
-            (symbol_short!("org_verified"),),
+            (Symbol::new(&env, "org_verified"),),
             (org_id, admin, env.ledger().timestamp()),
         );
 
@@ -532,7 +532,7 @@ impl IdentityContract {
 
         // Emit event
         env.events()
-            .publish((symbol_short!("org_unverified"),), (org_id, reason));
+            .publish((Symbol::new(&env, "org_unverified"),), (org_id, reason));
 
         Ok(())
     }
