@@ -37,6 +37,7 @@ import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
 import { ProofBundleModule } from './proof-bundle/proof-bundle.module';
 import { PolicyCenterModule } from './policy-center/policy-center.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 
 import type Redis from 'ioredis';
 
@@ -83,6 +84,7 @@ import type Redis from 'ioredis';
     TransparencyModule,
     ProofBundleModule,
     PolicyCenterModule,
+    ReconciliationModule,
   ],
   controllers: [AppController],
   providers: [
