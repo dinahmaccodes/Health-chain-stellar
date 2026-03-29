@@ -20,21 +20,12 @@ import { BloodRequestStatus } from './enums/blood-request-status.enum';
 
 const mockBloodRequestRepo = {
   exist: jest.fn().mockResolvedValue(false),
-  create: jest
+  create: jest.fn().mockImplementation((dto) => dto),
+  save: jest
     .fn()
-    .mockImplementation((dto: Partial<BloodRequestEntity>) => dto),
-  save: jest.fn().mockImplementation(
-    (
-      entity: Partial<BloodRequestEntity> & {
-        items?: BloodRequestItemEntity[];
-      },
-    ) =>
-      Promise.resolve({
-        ...entity,
-        id: 'req-uuid',
-        items: entity.items ?? [],
-      }),
-  ),
+    .mockImplementation((e) =>
+      Promise.resolve({ ...e, id: 'req-uuid', items: e.items ?? [] }),
+    ),
 };
 
 const mockBloodRequestItemRepo = {
@@ -104,10 +95,6 @@ describe('BloodRequestsService', () => {
           provide: getRepositoryToken(BloodRequestItemEntity),
           useValue: mockBloodRequestItemRepo,
         },
-        {
-          provide: getRepositoryToken(RequestStatusHistoryEntity),
-          useValue: mockRequestStatusHistoryRepo,
-        },
         { provide: InventoryService, useValue: mockInventoryService },
         { provide: SorobanService, useValue: mockSorobanService },
         { provide: EmailProvider, useValue: mockEmailProvider },
@@ -145,17 +132,19 @@ describe('BloodRequestsService', () => {
     });
 
     it('throws BloodRequestIrrecoverableError', async () => {
-      await expect(service.create(validDto, adminUser)).rejects.toBeInstanceOf(
-        BloodRequestIrrecoverableError,
-      );
+      await expect(
+        service.create(validDto as any, adminUser),
+      ).rejects.toBeInstanceOf(BloodRequestIrrecoverableError);
     });
 
     it('calls compensate with REVERT_INVENTORY and NOTIFY_USER handlers', async () => {
-      await expect(service.create(validDto, adminUser)).rejects.toThrow();
+      await expect(
+        service.create(validDto as any, adminUser),
+      ).rejects.toThrow();
 
       expect(mockCompensationService.compensate).toHaveBeenCalledTimes(1);
-      const [error, handlers] = mockCompensationService.compensate.mock
-        .calls[0] as [unknown, Array<{ action: CompensationAction }>];
+      const [error, handlers] =
+        mockCompensationService.compensate.mock.calls[0];
 
       expect(error).toBeInstanceOf(BloodRequestIrrecoverableError);
       const actions = handlers.map((handler) => handler.action);
@@ -166,7 +155,9 @@ describe('BloodRequestsService', () => {
     });
 
     it('does NOT double-release inventory (compensation already handled it)', async () => {
-      await expect(service.create(validDto, adminUser)).rejects.toThrow();
+      await expect(
+        service.create(validDto as any, adminUser),
+      ).rejects.toThrow();
 
       // releaseStockByBankAndType should NOT be called directly by the outer catch
       expect(
@@ -204,7 +195,7 @@ describe('BloodRequestsService', () => {
       };
 
       await expect(
-        service.create(dtoWithTwo as CreateBloodRequestDto, adminUser),
+        service.create(dtoWithTwo as any, adminUser),
       ).rejects.toThrow();
 
       // The outer catch should release the first reservation

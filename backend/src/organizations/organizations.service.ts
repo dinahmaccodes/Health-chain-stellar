@@ -10,17 +10,16 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-
-import { Repository } from 'typeorm';
 
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { EmailProvider } from '../notifications/providers/email.provider';
 
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { RejectOrganizationDto } from './dto/reject-organization.dto';
+import { SearchOrganizationsDto } from './dto/search-organizations.dto';
 import { OrganizationEntity } from './entities/organization.entity';
 import { OrganizationVerificationStatus } from './enums/organization-verification-status.enum';
+import { OrganizationRepository } from './organizations.repository';
 
 const ALLOWED_MIME = new Set([
   'application/pdf',
@@ -34,8 +33,7 @@ export class OrganizationsService {
   private readonly logger = new Logger(OrganizationsService.name);
 
   constructor(
-    @InjectRepository(OrganizationEntity)
-    private readonly orgRepo: Repository<OrganizationEntity>,
+    private readonly orgRepo: OrganizationRepository,
     private readonly emailProvider: EmailProvider,
     private readonly sorobanService: SorobanService,
     private readonly configService: ConfigService,
@@ -118,6 +116,7 @@ export class OrganizationsService {
 
     const existing = await this.orgRepo.findOne({
       where: { licenseNumber: dto.licenseNumber },
+      withDeleted: true,
     });
     if (existing) {
       throw new ConflictException({
@@ -154,10 +153,13 @@ export class OrganizationsService {
   }
 
   async listPending(): Promise<OrganizationEntity[]> {
-    return this.orgRepo.find({
-      where: { status: OrganizationVerificationStatus.PENDING_VERIFICATION },
-      order: { createdAt: 'ASC' },
-    });
+    return this.orgRepo
+      .createActiveQueryBuilder('org')
+      .where('org.status = :status', {
+        status: OrganizationVerificationStatus.PENDING_VERIFICATION,
+      })
+      .orderBy('org.createdAt', 'ASC')
+      .getMany();
   }
 
   async approve(
@@ -241,6 +243,97 @@ export class OrganizationsService {
       message: 'Organization registration rejected',
       data: org,
     };
+  }
+
+  async search(dto: SearchOrganizationsDto): Promise<{
+    message: string;
+    data: Array<OrganizationEntity & { distanceKm?: number }>;
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const { page = 1, pageSize = 25 } = dto;
+    const qb = this.orgRepo.createActiveQueryBuilder('org');
+
+    if (dto.query) {
+      qb.andWhere(
+        '(org.name ILIKE :q OR org.description ILIKE :q)',
+        { q: `%${dto.query}%` },
+      );
+    }
+    if (dto.type) {
+      qb.andWhere('org.type = :type', { type: dto.type });
+    }
+    if (dto.verificationStatus) {
+      qb.andWhere('org.verificationStatus = :vs', {
+        vs: dto.verificationStatus,
+      });
+    }
+    if (dto.city) {
+      qb.andWhere('org.city ILIKE :city', { city: `%${dto.city}%` });
+    }
+    if (dto.state) {
+      qb.andWhere('org.state ILIKE :state', { state: `%${dto.state}%` });
+    }
+
+    const orgs = await qb.getMany();
+
+    // Geolocation filtering and distance annotation
+    const hasGeo =
+      dto.latitude !== undefined &&
+      dto.longitude !== undefined;
+
+    let results: Array<OrganizationEntity & { distanceKm?: number }> = orgs.map(
+      (org) => {
+        if (!hasGeo) return org;
+        const distanceKm = this.haversineKm(
+          dto.latitude!,
+          dto.longitude!,
+          Number(org.latitude),
+          Number(org.longitude),
+        );
+        return Object.assign(org, { distanceKm });
+      },
+    );
+
+    if (hasGeo && dto.radiusKm !== undefined) {
+      results = results.filter(
+        (o) => o.distanceKm !== undefined && o.distanceKm <= dto.radiusKm!,
+      );
+    }
+
+    // Sorting
+    if (dto.sortBy === 'distance' && hasGeo) {
+      results.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+    } else if (dto.sortBy === 'rating') {
+      results.sort((a, b) => Number(b.rating) - Number(a.rating));
+    } else {
+      results.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    const total = results.length;
+    const data = results.slice((page - 1) * pageSize, page * pageSize);
+
+    return { message: 'Organizations retrieved successfully', data, total, page, pageSize };
+  }
+
+  /** Haversine formula — returns distance in km between two lat/lon points. */
+  private haversineKm(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    if (isNaN(lat2) || isNaN(lon2)) return Infinity;
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 100) / 100;
   }
 
   private async sendRegistrationReceivedEmail(org: OrganizationEntity) {

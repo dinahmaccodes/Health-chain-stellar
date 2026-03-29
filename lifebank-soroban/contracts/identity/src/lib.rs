@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
-    String, Vec,
+    String, Symbol, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,6 +23,8 @@ pub enum Error {
     BadgeAlreadyAwarded = 208,
     BadgeNotFound = 209,
     InvalidDeliveryProof = 210,
+    AlreadyVerified = 211,
+    AlreadyUnverified = 212,
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,20 @@ pub enum Role {
     Donor,
     Rider,
     Custom(u32),
+}
+
+/// Fine-grained permission scopes that map to on-chain actions (Issue #374).
+/// These mirror the backend `Permission` enum for actions that require
+/// on-chain enforcement (e.g. settlement release, verification admin).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum PermissionScope {
+    InventoryWrite,
+    DispatchOverride,
+    RequestApprove,
+    DisputeResolve,
+    VerificationAdmin,
+    SettlementRelease,
 }
 
 #[contracttype]
@@ -134,10 +150,14 @@ pub enum DataKey {
     Org(Address),
     License(String),
     Docs(Address),
-    Role(Address),
     OrgCounter,
     Admin,
     OrgTypeList(OrgType),
+    OrgVerifier(Address),
+    OrgUnverifyReason(Address),
+    // Verification
+    VerificationMetadata(Address),
+    VerificationEvents(Address),
     // Rating
     RatedFlag(u64, Address),
     RatingRecord(u64, Address),
@@ -145,8 +165,10 @@ pub enum DataKey {
     OrgBadges(Address),
     // Delivery
     Delivery(u64),
-    // AccessControlContract
+    // AccessControlContract (and IdentityContract role storage)
     AddressRoles(Address),
+    // Fine-grained permission scopes (Issue #374)
+    AddressScopes(Address),
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +190,7 @@ impl IdentityContract {
         env.storage().instance().set(&DataKey::OrgCounter, &0u32);
         Self::grant_role(env.clone(), admin.clone(), Role::Admin);
 
-        env.events()
-            .publish((symbol_short!("init"),), admin);
+        env.events().publish((symbol_short!("init"),), admin);
 
         Ok(())
     }
@@ -190,7 +211,11 @@ impl IdentityContract {
             return Err(Error::Unauthorized);
         }
 
-        Ok(env.storage().instance().get(&DataKey::OrgCounter).unwrap_or(0))
+        Ok(env
+            .storage()
+            .instance()
+            .get(&DataKey::OrgCounter)
+            .unwrap_or(0))
     }
 
     /// Register a new organization
@@ -267,16 +292,65 @@ impl IdentityContract {
         Ok(org_id)
     }
 
-    /// Internal helper to grant a role to an address
+    /// Internal helper to grant a role to an address.
+    ///
+    /// Stores all roles for an address in a single `DataKey::AddressRoles` entry
+    /// (a sorted, deduplicated `Vec<RoleGrant>`), reducing per-address storage
+    /// overhead from N entries to 1.
     pub fn grant_role(env: Env, address: Address, role: Role) {
-        env.storage()
+        let key = DataKey::AddressRoles(address.clone());
+        let mut roles: Vec<RoleGrant> = env
+            .storage()
             .persistent()
-            .set(&DataKey::Role(address), &role);
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        // Deduplicate: remove existing grant for this role before inserting.
+        let mut new_roles: Vec<RoleGrant> = Vec::new(&env);
+        for i in 0..roles.len() {
+            let g = roles.get(i).unwrap();
+            if g.role != role {
+                new_roles.push_back(g);
+            }
+        }
+
+        let grant = RoleGrant {
+            role: role.clone(),
+            granted_at: env.ledger().timestamp(),
+            expires_at: None,
+        };
+
+        // Insert in sorted order to keep the vec deterministically ordered.
+        let mut inserted = false;
+        let mut sorted: Vec<RoleGrant> = Vec::new(&env);
+        for i in 0..new_roles.len() {
+            let g = new_roles.get(i).unwrap();
+            if !inserted && grant.role < g.role {
+                sorted.push_back(grant.clone());
+                inserted = true;
+            }
+            sorted.push_back(g);
+        }
+        if !inserted {
+            sorted.push_back(grant);
+        }
+
+        env.storage().persistent().set(&key, &sorted);
     }
 
-    /// Get the role of an address
+    /// Get the primary role of an address (first role in the sorted vec, if any).
     pub fn get_role(env: Env, address: Address) -> Option<Role> {
-        env.storage().persistent().get(&DataKey::Role(address))
+        let key = DataKey::AddressRoles(address);
+        let roles: Vec<RoleGrant> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+        if roles.is_empty() {
+            None
+        } else {
+            Some(roles.get(0).unwrap().role)
+        }
     }
 
     /// Get organization by ID
@@ -286,8 +360,27 @@ impl IdentityContract {
 
     /// Check if an address has a given role
     pub fn has_role(env: Env, account: Address, role: Role) -> bool {
-        let stored: Option<Role> = env.storage().persistent().get(&DataKey::Role(account));
-        stored.map(|r| r == role).unwrap_or(false)
+        let key = DataKey::AddressRoles(account);
+        let roles: Vec<RoleGrant> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+        for i in 0..roles.len() {
+            if roles.get(i).unwrap().role == role {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Require that an address has a given role, return Unauthorized error if not
+    fn require_role(env: &Env, account: &Address, role: Role) -> Result<(), Error> {
+        if Self::has_role(env.clone(), account.clone(), role) {
+            Ok(())
+        } else {
+            Err(Error::Unauthorized)
+        }
     }
 
     /// Return all organizations of the given type (up to max_results)
@@ -390,6 +483,76 @@ impl IdentityContract {
         results
     }
 
+    /// Verify an organization (admin only)
+    pub fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        let org_key = DataKey::Org(org_id.clone());
+        let mut organization: Organization = env
+            .storage()
+            .persistent()
+            .get(&org_key)
+            .ok_or(Error::OrganizationNotFound)?;
+
+        if organization.verified {
+            return Err(Error::AlreadyVerified);
+        }
+
+        // Update organization
+        organization.verified = true;
+        organization.verified_timestamp = Some(env.ledger().timestamp());
+        env.storage().persistent().set(&org_key, &organization);
+
+        // Store verifier
+        let verifier_key = DataKey::OrgVerifier(org_id.clone());
+        env.storage().persistent().set(&verifier_key, &admin);
+
+        // Emit event
+        env.events().publish(
+            (Symbol::new(&env, "org_verified"),),
+            (org_id, admin, env.ledger().timestamp()),
+        );
+
+        Ok(())
+    }
+
+    /// Unverify an organization (admin only)
+    pub fn unverify_organization(
+        env: Env,
+        admin: Address,
+        org_id: Address,
+        reason: String,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        let org_key = DataKey::Org(org_id.clone());
+        let mut organization: Organization = env
+            .storage()
+            .persistent()
+            .get(&org_key)
+            .ok_or(Error::OrganizationNotFound)?;
+
+        if !organization.verified {
+            return Err(Error::AlreadyUnverified);
+        }
+
+        organization.verified = false;
+        organization.verified_timestamp = None;
+        env.storage().persistent().set(&org_key, &organization);
+
+        // Store reason
+        let reason_key = DataKey::OrgUnverifyReason(org_id.clone());
+        env.storage().persistent().set(&reason_key, &reason);
+
+        // Emit event
+        env.events()
+            .publish((Symbol::new(&env, "org_unverified"),), (org_id, reason));
+
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Rating
     // -----------------------------------------------------------------------
@@ -446,20 +609,14 @@ impl IdentityContract {
             .persistent()
             .set(&DataKey::RatingRecord(request_id, rater.clone()), &record);
 
-        env.events().publish(
-            (symbol_short!("rated"),),
-            (org_id, rater, rating),
-        );
+        env.events()
+            .publish((symbol_short!("rated"),), (org_id, rater, rating));
 
         Ok(())
     }
 
     /// Get a rating record for a given request and rater
-    pub fn get_rating_record(
-        env: Env,
-        request_id: u64,
-        rater: Address,
-    ) -> Option<RatingRecord> {
+    pub fn get_rating_record(env: Env, request_id: u64, rater: Address) -> Option<RatingRecord> {
         env.storage()
             .persistent()
             .get(&DataKey::RatingRecord(request_id, rater))
@@ -500,7 +657,11 @@ impl IdentityContract {
         }
 
         // Org must exist
-        if !env.storage().persistent().has(&DataKey::Org(org_id.clone())) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Org(org_id.clone()))
+        {
             return Err(Error::OrganizationNotFound);
         }
 
@@ -528,10 +689,8 @@ impl IdentityContract {
         badges.push_back(record);
         env.storage().persistent().set(&badges_key, &badges);
 
-        env.events().publish(
-            (symbol_short!("badge"),),
-            (org_id, admin),
-        );
+        env.events()
+            .publish((symbol_short!("badge"),), (org_id, admin));
 
         Ok(())
     }
@@ -609,7 +768,11 @@ impl IdentityContract {
         }
 
         // Org must exist
-        if !env.storage().persistent().has(&DataKey::Org(org_id.clone())) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Org(org_id.clone()))
+        {
             return Err(Error::OrganizationNotFound);
         }
 
@@ -841,6 +1004,87 @@ impl AccessControlContract {
 
         new_roles
     }
+
+    // ── Fine-grained permission scopes (Issue #374) ──────────────────────
+
+    /// Grant a permission scope to an address. Admin only.
+    pub fn grant_scope(env: Env, address: Address, scope: PermissionScope) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        let key = DataKey::AddressScopes(address.clone());
+        let mut scopes: Vec<PermissionScope> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env));
+
+        // Deduplicate
+        for i in 0..scopes.len() {
+            if scopes.get(i).unwrap() == scope {
+                return;
+            }
+        }
+        scopes.push_back(scope);
+        env.storage().persistent().set(&key, &scopes);
+    }
+
+    /// Revoke a permission scope from an address. Admin only.
+    pub fn revoke_scope(env: Env, address: Address, scope: PermissionScope) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        admin.require_auth();
+
+        let key = DataKey::AddressScopes(address.clone());
+        if let Some(scopes) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<PermissionScope>>(&key)
+        {
+            let mut new_scopes: Vec<PermissionScope> = Vec::new(&env);
+            for i in 0..scopes.len() {
+                let s = scopes.get(i).unwrap();
+                if s != scope {
+                    new_scopes.push_back(s);
+                }
+            }
+            env.storage().persistent().set(&key, &new_scopes);
+        }
+    }
+
+    /// Check whether an address holds a specific permission scope.
+    pub fn has_scope(env: Env, address: Address, scope: PermissionScope) -> bool {
+        let key = DataKey::AddressScopes(address);
+        if let Some(scopes) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<PermissionScope>>(&key)
+        {
+            for i in 0..scopes.len() {
+                if scopes.get(i).unwrap() == scope {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Return all scopes granted to an address.
+    pub fn get_scopes(env: Env, address: Address) -> Vec<PermissionScope> {
+        let key = DataKey::AddressScopes(address);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(&env))
+    }
 }
 
 mod test;
+mod verification;

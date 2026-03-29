@@ -4,9 +4,9 @@ import {
   UpdateDateColumn,
   OneToMany,
   Index,
-  OneToMany,
   BaseEntity,
 } from 'typeorm';
+
 
 import { BloodComponent } from '../enums/blood-component.enum';
 import { BloodStatus } from '../enums/blood-status.enum';
@@ -14,51 +14,9 @@ import { BloodType } from '../enums/blood-type.enum';
 
 import { BloodStatusHistory } from './blood-status-history.entity';
 
-@Entity('blood_units')
-@Index(['unitNumber'], { unique: true })
-@Index(['bloodType', 'bankId'])
-export class BloodUnitEntity {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column({ type: 'varchar', length: 80, unique: true })
-  unitNumber: string;
-
-  @Column({ type: 'bigint', nullable: true })
-  blockchainUnitId?: number;
-
-  @Column({ type: 'varchar', length: 255 })
-  blockchainTransactionHash: string;
-
-  @Column({ type: 'varchar', length: 5 })
-  bloodType: string;
-
-  @Column({ type: 'int' })
-  quantityMl: number;
-
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  donorId?: string;
-
-  @Column({ type: 'varchar', length: 70 })
-  bankId: string;
-
-  @Column({ type: 'timestamp' })
-  expirationDate: Date;
-
-  @Column({ type: 'varchar', length: 80, nullable: true })
-  registeredBy?: string;
-
-  @Column({ type: 'text' })
-  barcodeData: string;
-
-  @Column({ type: 'jsonb', nullable: true })
-  metadata?: Record<string, unknown>;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
+export interface BloodUnitValidationResult {
+  isValid: boolean;
+  errors: string[];
 }
 
 @Entity('blood_units')
@@ -67,7 +25,11 @@ export class BloodUnitEntity {
 @Index('idx_blood_units_organization', ['organizationId'])
 @Index('idx_blood_units_expiry', ['expiresAt'])
 export class BloodUnit extends BaseEntity {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
   @Column({ name: 'unit_code', type: 'varchar', unique: true })
+
   unitCode: string;
 
   @Column({
@@ -130,10 +92,43 @@ export class BloodUnit extends BaseEntity {
   @Column({ name: 'reserved_until', type: 'timestamp', nullable: true })
   reservedUntil: Date | null;
 
+  @Column({ type: 'double precision', nullable: true })
+  latitude: number | null;
+
+  @Column({ type: 'double precision', nullable: true })
+  longitude: number | null;
+
+  @Index('idx_blood_units_location', { spatial: true })
+  @Column({
+    type: 'geography',
+    spatialFeatureType: 'Point',
+    srid: 4326,
+    nullable: true,
+  })
+  location: any;
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, unknown>;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
   @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, {
     cascade: true,
   })
   statusHistory: BloodStatusHistory[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, unknown> | null;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 
   /**
    * Check if the blood unit has expired
@@ -141,6 +136,7 @@ export class BloodUnit extends BaseEntity {
   isExpired(): boolean {
     return new Date() > this.expiresAt;
   }
+
 
   /**
    * Check if the blood unit is available for use
@@ -225,7 +221,8 @@ export class BloodUnit extends BaseEntity {
    * Get the remaining shelf life as a percentage
    */
   getRemainingShelfLifePercentage(): number {
-    const totalShelfLifeMs = this.expiresAt.getTime() - this.collectedAt.getTime();
+    const totalShelfLifeMs =
+      this.expiresAt.getTime() - this.collectedAt.getTime();
     const remainingMs = this.expiresAt.getTime() - new Date().getTime();
     return Math.max(0, Math.min(100, (remainingMs / totalShelfLifeMs) * 100));
   }
@@ -235,11 +232,35 @@ export class BloodUnit extends BaseEntity {
    */
   isCompatibleWith(bloodType: BloodType): boolean {
     const compatibilityMap: Record<BloodType, BloodType[]> = {
-      [BloodType.O_NEGATIVE]: [BloodType.O_NEGATIVE, BloodType.O_POSITIVE, BloodType.A_NEGATIVE, BloodType.A_POSITIVE, BloodType.B_NEGATIVE, BloodType.B_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
-      [BloodType.O_POSITIVE]: [BloodType.O_POSITIVE, BloodType.A_POSITIVE, BloodType.B_POSITIVE, BloodType.AB_POSITIVE],
-      [BloodType.A_NEGATIVE]: [BloodType.A_NEGATIVE, BloodType.A_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
+      [BloodType.O_NEGATIVE]: [
+        BloodType.O_NEGATIVE,
+        BloodType.O_POSITIVE,
+        BloodType.A_NEGATIVE,
+        BloodType.A_POSITIVE,
+        BloodType.B_NEGATIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
+      [BloodType.O_POSITIVE]: [
+        BloodType.O_POSITIVE,
+        BloodType.A_POSITIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_POSITIVE,
+      ],
+      [BloodType.A_NEGATIVE]: [
+        BloodType.A_NEGATIVE,
+        BloodType.A_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
       [BloodType.A_POSITIVE]: [BloodType.A_POSITIVE, BloodType.AB_POSITIVE],
-      [BloodType.B_NEGATIVE]: [BloodType.B_NEGATIVE, BloodType.B_POSITIVE, BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
+      [BloodType.B_NEGATIVE]: [
+        BloodType.B_NEGATIVE,
+        BloodType.B_POSITIVE,
+        BloodType.AB_NEGATIVE,
+        BloodType.AB_POSITIVE,
+      ],
       [BloodType.B_POSITIVE]: [BloodType.B_POSITIVE, BloodType.AB_POSITIVE],
       [BloodType.AB_NEGATIVE]: [BloodType.AB_NEGATIVE, BloodType.AB_POSITIVE],
       [BloodType.AB_POSITIVE]: [BloodType.AB_POSITIVE],
@@ -324,6 +345,8 @@ export class BloodUnit extends BaseEntity {
       storageLocation: this.storageLocation,
       blockchainUnitId: this.blockchainUnitId,
       blockchainTxHash: this.blockchainTxHash,
+      latitude: this.latitude,
+      longitude: this.longitude,
       metadata: this.metadata,
       createdAt: this.createdAt.toISOString(),
       updatedAt: this.updatedAt.toISOString(),
@@ -331,13 +354,8 @@ export class BloodUnit extends BaseEntity {
   }
 }
 
-export class BloodUnitEntity extends BloodUnit {
-  unitNumber: string;
-  bankId: string;
-  quantityMl: number;
-  expirationDate: Date;
-  blockchainTransactionHash: string;
-  barcodeData: string;
-  registeredBy?: string;
-  metadata?: Record<string, unknown>;
+export interface BloodUnitValidationResult {
+  isValid: boolean;
+  errors: string[];
 }
+

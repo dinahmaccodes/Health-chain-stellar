@@ -1,4 +1,6 @@
 export enum Permission {
+  MANAGE_FEE_POLICIES = 'MANAGE_FEE_POLICIES',
+  VIEW_FEE_POLICIES = 'VIEW_FEE_POLICIES',
   // ── Orders ──────────────────────────────────────────────────────────
   CREATE_ORDER = 'create:order',
   VIEW_ORDER = 'view:order',
@@ -24,6 +26,7 @@ export enum Permission {
   CREATE_INVENTORY = 'create:inventory',
   UPDATE_INVENTORY = 'update:inventory',
   DELETE_INVENTORY = 'delete:inventory',
+  INVENTORY_WRITE = 'inventory:write',
 
   // ── Blood Units ──────────────────────────────────────────────────────
   VIEW_BLOODUNIT_TRAIL = 'view:bloodunit:trail',
@@ -39,6 +42,7 @@ export enum Permission {
   UPDATE_DISPATCH = 'update:dispatch',
   DELETE_DISPATCH = 'delete:dispatch',
   MANAGE_DISPATCH = 'manage:dispatch',
+  DISPATCH_OVERRIDE = 'dispatch:override',
 
   // ── Users ─────────────────────────────────────────────────────────────
   VIEW_USERS = 'view:users',
@@ -67,4 +71,12 @@ export enum Permission {
   // ── Admin ─────────────────────────────────────────────────────────────
   ADMIN_ACCESS = 'admin:access',
   MANAGE_ROLES = 'manage:roles',
+  READ_ANALYTICS = 'read:analytics',
+  EXPORT_DISPUTES = 'export:disputes',
+
+  // ── Fine-grained workflow scopes (Issue #374) ─────────────────────────
+  REQUEST_APPROVE = 'request:approve',
+  DISPUTE_RESOLVE = 'dispute:resolve',
+  VERIFICATION_ADMIN = 'verification:admin',
+  SETTLEMENT_RELEASE = 'settlement:release',
 }

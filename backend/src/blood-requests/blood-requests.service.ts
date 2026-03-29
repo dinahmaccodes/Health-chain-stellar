@@ -1,16 +1,14 @@
 import { randomBytes } from 'crypto';
 
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 
+import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 
 import { UserRole } from '../auth/enums/user-role.enum';
+import { PermissionsService } from '../auth/permissions.service';
 import { SorobanService } from '../blockchain/services/soroban.service';
 import { CompensationService } from '../common/compensation/compensation.service';
 import {
@@ -23,9 +21,13 @@ import { EmailProvider } from '../notifications/providers/email.provider';
 import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
 import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
 import { BloodRequestEntity } from './entities/blood-request.entity';
-import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
-import { RequestStatus } from './enums/blood-request-status.enum';
-import { UrgencyLevel } from './enums/urgency-level.enum';
+import { BloodRequestStatus } from './enums/blood-request-status.enum';
+import {
+  BLOOD_REQUEST_QUEUE,
+  QUEUE_PRIORITY,
+  RequestUrgency,
+} from './enums/request-urgency.enum';
+import { BloodRequestJobData } from './processors/blood-request.processor';
 
 type RequestUser = { id: string; role: UserRole; email: string };
 
@@ -44,14 +46,19 @@ export class BloodRequestsService {
     private readonly sorobanService: SorobanService,
     private readonly emailProvider: EmailProvider,
     private readonly compensationService: CompensationService,
+    private readonly permissionsService: PermissionsService,
+    @InjectQueue(BLOOD_REQUEST_QUEUE)
+    private readonly bloodRequestQueue: Queue<BloodRequestJobData>,
   ) {}
 
   private assertHospitalAuthorization(
     user: RequestUser,
     hospitalId: string,
   ): void {
-    if (user.role === UserRole.HOSPITAL && user.id !== hospitalId) {
-      throw new ForbiddenException(
+    if (user.role === UserRole.HOSPITAL) {
+      this.permissionsService.assertIsAdminOrSelf(
+        user,
+        hospitalId,
         'Hospital accounts may only create blood requests where hospitalId matches their user id.',
       );
     }
@@ -133,22 +140,29 @@ export class BloodRequestsService {
     try {
       for (const item of dto.items) {
         const bloodType = item.bloodType.trim();
+        const quantity = item.quantityMl ?? item.quantity;
+        const bloodBankId = item.bloodBankId || dto.hospitalId; // Fallback to hospital if no specific bank
+
+        if (!quantity) {
+          throw new BadRequestException('Item quantity must be specified as quantityMl or quantity');
+        }
+
         await this.inventoryService.reserveStockOrThrow(
-          item.bloodBankId,
+          bloodBankId,
           bloodType,
-          item.quantity,
+          quantity,
         );
         reserved.push({
-          bloodBankId: item.bloodBankId,
+          bloodBankId,
           bloodType,
-          quantity: item.quantity,
+          quantity,
         });
       }
 
       const chainPayload = dto.items.map((i) => ({
-        bloodBankId: i.bloodBankId,
+        bloodBankId: i.bloodBankId || dto.hospitalId,
         bloodType: i.bloodType.trim(),
-        quantity: i.quantity,
+        quantity: i.quantityMl ?? i.quantity,
       }));
 
       let transactionHash: string;
@@ -230,8 +244,9 @@ export class BloodRequestsService {
       const parent = this.bloodRequestRepo.create({
         requestNumber,
         hospitalId: dto.hospitalId,
-        requiredBy,
-        urgencyLevel,
+        requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
+        createdTimestamp: Math.floor(Date.now() / 1000),
+        urgency: dto.urgency || 'ROUTINE',
         deliveryAddress: dto.deliveryAddress?.trim() ?? null,
         deliveryContactName: dto.deliveryContactName?.trim() ?? null,
         deliveryContactPhone: dto.deliveryContactPhone?.trim() ?? null,
@@ -248,9 +263,11 @@ export class BloodRequestsService {
         createdByUserId: user.id,
         items: dto.items.map((i) =>
           this.bloodRequestItemRepo.create({
-            bloodBankId: i.bloodBankId,
             bloodType: i.bloodType.trim(),
-            quantity: i.quantity,
+            component: i.component,
+            quantityMl: i.quantityMl || i.quantity,
+            priority: i.priority || 'NORMAL',
+            compatibilityNotes: i.compatibilityNotes,
           }),
         ),
         statusHistory: [
@@ -264,6 +281,20 @@ export class BloodRequestsService {
       });
 
       const saved = await this.bloodRequestRepo.save(parent);
+
+      // Enqueue for priority-based processing
+      const urgency = (saved.urgency as unknown as RequestUrgency) ?? RequestUrgency.ROUTINE;
+      await this.bloodRequestQueue.add(
+        'process-request',
+        { requestId: saved.id, urgency, enqueuedAt: Date.now() },
+        {
+          priority: QUEUE_PRIORITY[urgency],
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
 
       await this.sendCreationEmail(user.email, saved);
 
@@ -289,12 +320,13 @@ export class BloodRequestsService {
     const lines = request.items
       .map(
         (i) =>
-          `<li>${i.bloodType} × ${i.quantity} (bank <code>${i.bloodBankId}</code>)</li>`,
+          `<li>${i.bloodType} ${i.component} × ${i.quantityMl}ml (Priority: ${i.priority})</li>`,
       )
       .join('');
+    const requiredByDate = new Date(request.requiredByTimestamp * 1000);
     const html = `
       <p>Blood request <strong>${request.requestNumber}</strong> was created.</p>
-      <p>Required by: ${request.requiredBy.toISOString()}</p>
+      <p>Required by: ${requiredByDate.toISOString()}</p>
       <ul>${lines}</ul>
       <p>On-chain tx: <code>${request.blockchainTxHash ?? 'n/a'}</code></p>
     `;

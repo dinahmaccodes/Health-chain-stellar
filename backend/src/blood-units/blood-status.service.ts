@@ -5,21 +5,23 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+
 import { LessThan, Repository } from 'typeorm';
 
 import { NotificationChannel } from '../notifications/enums/notification-channel.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { BlockchainEvent } from '../soroban/entities/blockchain-event.entity';
+import { SorobanService } from '../soroban/soroban.service';
 
 import {
   BulkUpdateBloodStatusDto,
   ReserveBloodUnitDto,
   UpdateBloodStatusDto,
 } from './dto/update-blood-status.dto';
-import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatusHistory } from './entities/blood-status-history.entity';
+import { BloodUnit } from './entities/blood-unit.entity';
 import { BloodStatus } from './enums/blood-status.enum';
 
 interface AuthenticatedUserContext {
@@ -31,6 +33,7 @@ export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
   [BloodStatus.AVAILABLE]: [
     BloodStatus.RESERVED,
     BloodStatus.IN_TRANSIT,
+    BloodStatus.IN_TRANSFER,
     BloodStatus.QUARANTINED,
     BloodStatus.PROCESSING,
     BloodStatus.EXPIRED,
@@ -43,6 +46,7 @@ export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
     BloodStatus.EXPIRED,
   ],
   [BloodStatus.IN_TRANSIT]: [BloodStatus.DELIVERED, BloodStatus.DISCARDED],
+  [BloodStatus.IN_TRANSFER]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
   [BloodStatus.DELIVERED]: [],
   [BloodStatus.EXPIRED]: [BloodStatus.DISCARDED],
   [BloodStatus.QUARANTINED]: [BloodStatus.AVAILABLE, BloodStatus.DISCARDED],
@@ -53,6 +57,7 @@ export const ALLOWED_TRANSITIONS: Record<BloodStatus, BloodStatus[]> = {
     BloodStatus.DISCARDED,
   ],
 };
+
 
 @Injectable()
 export class BloodStatusService {
@@ -66,6 +71,7 @@ export class BloodStatusService {
     @InjectRepository(BlockchainEvent)
     private readonly blockchainEventRepository: Repository<BlockchainEvent>,
     private readonly notificationsService: NotificationsService,
+    private readonly sorobanService: SorobanService,
   ) {}
 
   async updateStatus(
@@ -73,7 +79,9 @@ export class BloodStatusService {
     dto: UpdateBloodStatusDto,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.bloodUnitRepository.findOne({ where: { id: unitId } });
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
@@ -83,7 +91,10 @@ export class BloodStatusService {
     const previousStatus = unit.status;
     unit.status = dto.status;
 
-    if (previousStatus === BloodStatus.RESERVED && dto.status !== BloodStatus.RESERVED) {
+    if (
+      previousStatus === BloodStatus.RESERVED &&
+      dto.status !== BloodStatus.RESERVED
+    ) {
       unit.reservedFor = null;
       unit.reservedUntil = null;
     }
@@ -99,7 +110,12 @@ export class BloodStatusService {
     });
     await this.statusHistoryRepository.save(historyEntry);
 
-    await this.syncStatusToBlockchain(unit, previousStatus, dto.status, user?.id ?? null);
+    await this.syncStatusToBlockchain(
+      unit,
+      previousStatus,
+      dto.status,
+      user?.id ?? null,
+    );
     await this.sendStatusChangeNotification(unit, previousStatus, dto.status);
 
     return {
@@ -115,7 +131,10 @@ export class BloodStatusService {
     dto: BulkUpdateBloodStatusDto,
     user?: AuthenticatedUserContext,
   ) {
-    const updateDto: UpdateBloodStatusDto = { status: dto.status, reason: dto.reason };
+    const updateDto: UpdateBloodStatusDto = {
+      status: dto.status,
+      reason: dto.reason,
+    };
 
     const results = await Promise.allSettled(
       dto.unitIds.map((unitId) => this.updateStatus(unitId, updateDto, user)),
@@ -142,7 +161,9 @@ export class BloodStatusService {
     dto: ReserveBloodUnitDto,
     user?: AuthenticatedUserContext,
   ) {
-    const unit = await this.bloodUnitRepository.findOne({ where: { id: unitId } });
+    const unit = await this.bloodUnitRepository.findOne({
+      where: { id: unitId },
+    });
     if (!unit) {
       throw new NotFoundException(`Blood unit ${unitId} not found`);
     }
@@ -164,12 +185,19 @@ export class BloodStatusService {
       bloodUnitId: unitId,
       previousStatus,
       newStatus: BloodStatus.RESERVED,
-      reason: dto.reason ?? `Reserved for ${dto.reservedFor} until ${dto.reservedUntil}`,
+      reason:
+        dto.reason ??
+        `Reserved for ${dto.reservedFor} until ${dto.reservedUntil}`,
       changedBy: user?.id ?? null,
     });
     await this.statusHistoryRepository.save(historyEntry);
 
-    await this.syncStatusToBlockchain(unit, previousStatus, BloodStatus.RESERVED, user?.id ?? null);
+    await this.syncStatusToBlockchain(
+      unit,
+      previousStatus,
+      BloodStatus.RESERVED,
+      user?.id ?? null,
+    );
 
     return {
       success: true,
@@ -271,6 +299,29 @@ export class BloodStatusService {
     changedBy: string | null,
   ): Promise<void> {
     try {
+      const blockchainUnitId = Number(unit.blockchainUnitId);
+      const canMirrorOnChain = Number.isFinite(blockchainUnitId);
+
+      if (canMirrorOnChain && newStatus === BloodStatus.QUARANTINED) {
+        await this.sorobanService.quarantineBloodUnit({
+          unitId: blockchainUnitId,
+          reason: 'OTHER',
+        });
+      }
+
+      if (
+        canMirrorOnChain &&
+        previousStatus === BloodStatus.QUARANTINED &&
+        (newStatus === BloodStatus.AVAILABLE || newStatus === BloodStatus.DISCARDED)
+      ) {
+        await this.sorobanService.finalizeQuarantine({
+          unitId: blockchainUnitId,
+          disposition:
+            newStatus === BloodStatus.AVAILABLE ? 'RELEASE' : 'DISCARD',
+          reason: 'OTHER',
+        });
+      }
+
       const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await this.blockchainEventRepository.save(
         this.blockchainEventRepository.create({

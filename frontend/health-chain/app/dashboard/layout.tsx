@@ -14,7 +14,12 @@ import {
   LogOut, 
   Menu,
   X,
-  Package // Added this missing import
+  Package,
+  ShieldAlert,
+  Upload,
+  Droplets,
+  FlaskConical,
+  BadgeDollarSign,
 } from "lucide-react";
 
 function classNames(...classes: (string | undefined | null | false)[]) {
@@ -28,6 +33,12 @@ const sidebarLinks = [
   { name: "Donors Lists", href: "/dashboard/donors", icon: HandHeart },
   { name: "Hospitals", href: "/dashboard/hospitals", icon: Building2 },
   { name: "Track Riders", href: "/dashboard/track-riders", icon: Bike },
+  { name: "Anomaly Queue", href: "/admin/anomalies", icon: ShieldAlert },
+  { name: "Quarantine Review", href: "/admin/quarantine", icon: FlaskConical },
+  { name: "Policy Center", href: "/admin/policy-center", icon: Settings },
+  { name: "Batch Import", href: "/admin/batch-import", icon: Upload },
+  { name: "Expiration Forecast", href: "/admin/expiration-forecast", icon: Droplets },
+  { name: "Settlement Review", href: "/dashboard/settlement", icon: BadgeDollarSign },
 ];
 
 export default function DashboardLayout({

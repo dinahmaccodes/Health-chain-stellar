@@ -1,10 +1,22 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Repository } from 'typeorm';
-import { RiderEntity } from './entities/rider.entity';
+
+import {
+  PaginatedResponse,
+  PaginationQueryDto,
+  PaginationUtil,
+} from '../common/pagination';
+
 import { CreateRiderDto } from './dto/create-rider.dto';
-import { UpdateRiderDto } from './dto/update-rider.dto';
 import { RegisterRiderDto } from './dto/register-rider.dto';
+import { UpdateRiderDto } from './dto/update-rider.dto';
+import { RiderEntity } from './entities/rider.entity';
 import { RiderStatus } from './enums/rider-status.enum';
 
 @Injectable()
@@ -14,16 +26,21 @@ export class RidersService {
     private readonly riderRepository: Repository<RiderEntity>,
   ) {}
 
-  async findAll(status?: RiderStatus) {
+  async findAll(
+    status?: RiderStatus,
+    paginationDto?: PaginationQueryDto,
+  ): Promise<PaginatedResponse<RiderEntity>> {
+    const { page = 1, pageSize = 25 } = paginationDto || {};
     const where = status ? { status } : {};
-    const riders = await this.riderRepository.find({
+
+    const [riders, totalCount] = await this.riderRepository.findAndCount({
       where,
       relations: ['user'],
+      skip: PaginationUtil.calculateSkip(page, pageSize),
+      take: pageSize,
     });
-    return {
-      message: 'Riders retrieved successfully',
-      data: riders,
-    };
+
+    return PaginationUtil.createResponse(riders, page, pageSize, totalCount);
   }
 
   async findOne(id: string) {
@@ -59,7 +76,9 @@ export class RidersService {
       where: { userId: createRiderDto.userId },
     });
     if (existing) {
-      throw new ConflictException(`Rider for user '${createRiderDto.userId}' already exists`);
+      throw new ConflictException(
+        `Rider for user '${createRiderDto.userId}' already exists`,
+      );
     }
 
     const rider = this.riderRepository.create(createRiderDto);
@@ -86,7 +105,8 @@ export class RidersService {
     });
     const saved = await this.riderRepository.save(rider);
     return {
-      message: 'Rider registration submitted successfully. Awaiting verification.',
+      message:
+        'Rider registration submitted successfully. Awaiting verification.',
       data: saved,
     };
   }
@@ -180,5 +200,88 @@ export class RidersService {
       message: 'Nearby riders retrieved successfully',
       data: nearbyRiders,
     };
+  }
+
+  async getPerformance(id: string): Promise<{
+    message: string;
+    data: {
+      riderId: string;
+      totalDeliveries: number;
+      completedDeliveries: number;
+      cancelledDeliveries: number;
+      failedDeliveries: number;
+      successRate: number;
+      onTimeRate: number;
+      rating: number;
+      status: RiderStatus;
+      isVerified: boolean;
+    };
+  }> {
+    const { data: rider } = await this.findOne(id);
+
+    const total =
+      rider.completedDeliveries +
+      rider.cancelledDeliveries +
+      rider.failedDeliveries;
+
+    const successRate =
+      total === 0
+        ? 0
+        : Math.round((rider.completedDeliveries / total) * 10000) / 100;
+
+    // on-time rate approximated from completed vs total attempted (cancelled + failed treated as late/missed)
+    const onTimeRate = successRate;
+
+    return {
+      message: 'Rider performance retrieved successfully',
+      data: {
+        riderId: rider.id,
+        totalDeliveries: total,
+        completedDeliveries: rider.completedDeliveries,
+        cancelledDeliveries: rider.cancelledDeliveries,
+        failedDeliveries: rider.failedDeliveries,
+        successRate,
+        onTimeRate,
+        rating: rider.rating,
+        status: rider.status,
+        isVerified: rider.isVerified,
+      },
+    };
+  }
+
+  async getLeaderboard(limit = 10): Promise<{
+    message: string;
+    data: Array<{
+      rank: number;
+      riderId: string;
+      completedDeliveries: number;
+      successRate: number;
+      rating: number;
+    }>;
+  }> {
+    const riders = await this.riderRepository.find({
+      where: { isVerified: true },
+    });
+
+    const ranked = riders
+      .map((r) => {
+        const total =
+          r.completedDeliveries + r.cancelledDeliveries + r.failedDeliveries;
+        const successRate =
+          total === 0
+            ? 0
+            : Math.round((r.completedDeliveries / total) * 10000) / 100;
+        return { riderId: r.id, completedDeliveries: r.completedDeliveries, successRate, rating: r.rating };
+      })
+      .sort(
+        (a, b) =>
+          b.completedDeliveries - a.completedDeliveries ||
+          b.successRate - a.successRate ||
+          b.rating - a.rating,
+      )
+      .slice(0, limit)
+      .map((r, i) => ({ rank: i + 1, ...r }));
+
+    return { message: 'Leaderboard retrieved successfully', data: ranked };
   }
 }

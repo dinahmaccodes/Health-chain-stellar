@@ -13,6 +13,7 @@ import {
 import { UrgencyLevel } from '../enums/urgency-level.enum';
 
 import { CreateRequestItemDto } from './create-request-item.dto';
+import { RequestUrgency } from '../entities/blood-request.entity';
 
 export class CreateBloodRequestDto {
   @IsString()
@@ -32,6 +33,10 @@ export class CreateBloodRequestDto {
   @Type(() => CreateRequestItemDto)
   @ArrayMinSize(1)
   items: CreateRequestItemDto[];
+
+  @IsEnum(RequestUrgency)
+  @IsOptional()
+  urgency?: RequestUrgency;
 
   @IsOptional()
   @IsString()

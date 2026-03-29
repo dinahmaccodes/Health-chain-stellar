@@ -1,3 +1,5 @@
+import { extname } from 'path';
+
 import {
   Controller,
   Get,
@@ -14,14 +16,16 @@ import {
   Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+
 import { diskStorage } from 'multer';
-import { extname } from 'path';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { Auditable } from '../common/audit/auditable.decorator';
+import { AuditLogInterceptor } from '../common/audit/audit-log.interceptor';
 
-import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UsersService } from './users.service';
 
 @Controller('users')
 export class UsersController {
@@ -59,6 +63,8 @@ export class UsersController {
   }
 
   @RequirePermissions(Permission.MANAGE_USERS)
+  @Auditable({ action: 'user.updated', resourceType: 'User' })
+  @UseInterceptors(AuditLogInterceptor)
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -88,10 +94,7 @@ export class UsersController {
       }),
     }),
   )
-  uploadAvatar(
-    @UploadedFile() file: Express.Multer.File,
-    @Request() req: any,
-  ) {
+  uploadAvatar(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
     return this.usersService.uploadAvatar(req.user?.id, file, {
       ipAddress: req.headers?.['x-forwarded-for'] ?? req.ip,
       userAgent: req.headers?.['user-agent'],

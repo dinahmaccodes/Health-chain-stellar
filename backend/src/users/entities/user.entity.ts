@@ -20,6 +20,9 @@ import { TwoFactorAuthEntity } from './two-factor-auth.entity';
 @Entity('users')
 @Index('IDX_USERS_EMAIL', ['email'], { unique: true })
 @Index('IDX_USERS_ORGANIZATION_ID', ['organizationId'])
+@Index('IDX_USERS_ROLE', ['role'])
+@Index('IDX_USERS_REGION', ['region'])
+@Index('IDX_USERS_CREATED_AT', ['createdAt'])
 export class UserEntity extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -71,6 +74,9 @@ export class UserEntity extends BaseEntity {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
+
+  @Column({ name: 'email_verified', type: 'boolean', default: false })
+  emailVerified: boolean;
 
   @ManyToOne(() => OrganizationEntity, {
     nullable: true,

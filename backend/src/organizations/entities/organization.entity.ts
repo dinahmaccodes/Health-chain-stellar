@@ -6,6 +6,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
 } from 'typeorm';
 
 import { OrganizationType } from '../enums/organization-type.enum';
@@ -17,6 +18,7 @@ import { VerificationStatus } from '../enums/verification-status.enum';
 @Index('IDX_ORGANIZATIONS_VERIFICATION_STATUS', ['verificationStatus'])
 @Index('IDX_ORGANIZATIONS_LOCATION', ['latitude', 'longitude'])
 @Index('IDX_ORGANIZATIONS_CITY_COUNTRY', ['city', 'country'])
+@Index('IDX_ORGANIZATIONS_DELETED_AT', ['deletedAt'])
 export class OrganizationEntity extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -164,6 +166,42 @@ export class OrganizationEntity extends BaseEntity {
     nullable: true,
   })
   blockchainAddress?: string | null;
+
+  @Column({
+    name: 'verification_source',
+    type: 'varchar',
+    length: 50,
+    default: 'backend',
+  })
+  verificationSource!: string;
+
+  @Column({ name: 'synced_at', type: 'timestamp', nullable: true })
+  syncedAt?: Date | null;
+
+  @Column({
+    name: 'verification_tx_hash',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  verificationTxHash?: string | null;
+
+  @Column({
+    name: 'sync_status',
+    type: 'varchar',
+    length: 50,
+    default: 'pending',
+  })
+  syncStatus!: string;
+
+  @Column({ name: 'sync_error_message', type: 'text', nullable: true })
+  syncErrorMessage?: string | null;
+
+  @Column({ name: 'sync_retry_count', type: 'int', default: 0 })
+  syncRetryCount!: number;
+
+  @Column({ name: 'soroban_verified_at', type: 'timestamp', nullable: true })
+  sorobanVerifiedAt?: Date | null;
 
   @Column({ type: 'decimal', precision: 3, scale: 2, default: 0 })
   rating!: number;
