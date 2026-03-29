@@ -3,6 +3,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, String,
     Vec,
 };
+use soroban_sdk::token;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,21 @@ pub struct Payment {
     pub status: PaymentStatus,
     pub created_at: u64,
     pub updated_at: u64,
-    pub dispute_metadata: Option<DisputeMetadata>,
+    pub dispute_reason_code: Option<u32>,
+    pub dispute_case_id: Option<String>,
+    pub dispute_resolved: bool,
+}
+
+fn dispute_reason_to_code(reason: DisputeReason) -> u32 {
+    match reason {
+        DisputeReason::FailedDelivery => 1,
+        DisputeReason::TemperatureExcursion => 2,
+        DisputeReason::PaymentContested => 3,
+        DisputeReason::WrongItem => 4,
+        DisputeReason::DamagedGoods => 5,
+        DisputeReason::LateDelivery => 6,
+        DisputeReason::Other => 7,
+    }
 }
 
 #[contracttype]
@@ -101,6 +116,7 @@ pub enum Error {
     SamePayerPayee = 502,
     InvalidPage = 503,
     NotPledgeDonor = 504,
+    InsufficientEscrowFunds = 505,
 }
 
 // ── Storage keys ───────────────────────────────────────────────────────────────
@@ -190,7 +206,9 @@ impl PaymentContract {
             status: PaymentStatus::Pending,
             created_at: now,
             updated_at: now,
-            dispute_metadata: None,
+            dispute_reason_code: None,
+            dispute_case_id: None,
+            dispute_resolved: false,
         };
 
         store_payment(&env, &payment);
@@ -252,6 +270,9 @@ impl PaymentContract {
             status: PaymentStatus::Locked,
             created_at: now,
             updated_at: now,
+            dispute_reason_code: None,
+            dispute_case_id: None,
+            dispute_resolved: false,
         };
 
         store_payment(&env, &payment);
@@ -282,7 +303,9 @@ impl PaymentContract {
     ) -> Result<(), Error> {
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
         payment.status = PaymentStatus::Disputed;
-        payment.dispute_metadata = Some(DisputeMetadata { reason, case_id: case_id.clone(), resolved: false });
+        payment.dispute_reason_code = Some(dispute_reason_to_code(reason));
+        payment.dispute_case_id = Some(case_id.clone());
+        payment.dispute_resolved = false;
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);
 
@@ -297,8 +320,8 @@ impl PaymentContract {
     /// Mark a disputed payment's case as resolved.
     pub fn resolve_dispute(env: Env, payment_id: u64) -> Result<(), Error> {
         let mut payment = load_payment(&env, payment_id).ok_or(Error::PaymentNotFound)?;
-        if let Some(ref mut meta) = payment.dispute_metadata {
-            meta.resolved = true;
+        if payment.dispute_case_id.is_some() {
+            payment.dispute_resolved = true;
         }
         payment.updated_at = env.ledger().timestamp();
         store_payment(&env, &payment);

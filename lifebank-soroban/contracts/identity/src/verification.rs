@@ -1,6 +1,6 @@
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{contracttype, Address, Env, String, Symbol, Vec};
 
-use crate::{DataKey, Error, Organization, Role};
+use crate::{DataKey, Error, Organization};
 
 /// Verification metadata for tracking on-chain verification state
 #[contracttype]
@@ -25,7 +25,6 @@ pub struct VerificationEvent {
     pub reason: Option<String>,
 }
 
-#[contractimpl]
 pub trait VerificationTrait {
     /// Verify an organization (admin only)
     /// Returns the verification metadata
@@ -66,7 +65,6 @@ pub trait VerificationTrait {
 
 pub struct VerificationImpl;
 
-#[contractimpl]
 impl VerificationTrait for VerificationImpl {
     fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<VerificationMetadata, Error> {
         admin.require_auth();
@@ -106,14 +104,14 @@ impl VerificationTrait for VerificationImpl {
         Self::record_verification_event(
             &env,
             &org_id,
-            "verified".into(),
+            String::from_str(&env, "verified"),
             now,
             &admin,
             None,
         );
 
         env.events().publish(
-            (symbol_short!("org_verified"),),
+            (Symbol::new(&env, "org_verified"),),
             (org_id.clone(), admin, now),
         );
 
@@ -163,14 +161,14 @@ impl VerificationTrait for VerificationImpl {
         Self::record_verification_event(
             &env,
             &org_id,
-            "revoked".into(),
+            String::from_str(&env, "revoked"),
             now,
             &admin,
             Some(reason.clone()),
         );
 
         env.events()
-            .publish((symbol_short!("org_unverified"),), (org_id.clone(), reason));
+            .publish((Symbol::new(&env, "org_unverified"),), (org_id.clone(), reason));
 
         Ok(metadata)
     }
@@ -217,14 +215,10 @@ impl VerificationTrait for VerificationImpl {
         let mut results = Vec::new(&env);
 
         // Return last N events (reverse order)
-        let start = if all_events.len() > take as usize {
-            all_events.len() - take as usize
-        } else {
-            0
-        };
+        let start = all_events.len().saturating_sub(take);
 
         for i in start..all_events.len() {
-            results.push_back(all_events.get(i as u32).unwrap());
+            results.push_back(all_events.get(i).unwrap());
         }
 
         Ok(results)

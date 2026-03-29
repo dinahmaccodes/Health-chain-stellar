@@ -24,7 +24,8 @@ fn make_payment(
 
 /// Deploy a minimal Soroban token contract and mint `amount` to `recipient`.
 fn deploy_token_with_balance(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
-    let token_id = env.register(soroban_sdk::token::StellarAssetContract, (admin, &soroban_sdk::Symbol::new(env, "TST")));
+    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_id = token.address();
     let token_admin = soroban_sdk::token::StellarAssetClient::new(env, &token_id);
     token_admin.mint(recipient, &amount);
     token_id

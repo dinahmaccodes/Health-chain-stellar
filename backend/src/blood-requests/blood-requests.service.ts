@@ -113,22 +113,29 @@ export class BloodRequestsService {
     try {
       for (const item of dto.items) {
         const bloodType = item.bloodType.trim();
+        const quantity = item.quantityMl ?? item.quantity;
+        const bloodBankId = item.bloodBankId || dto.hospitalId; // Fallback to hospital if no specific bank
+
+        if (!quantity) {
+          throw new BadRequestException('Item quantity must be specified as quantityMl or quantity');
+        }
+
         await this.inventoryService.reserveStockOrThrow(
-          item.bloodBankId,
+          bloodBankId,
           bloodType,
-          item.quantity,
+          quantity,
         );
         reserved.push({
-          bloodBankId: item.bloodBankId,
+          bloodBankId,
           bloodType,
-          quantity: item.quantity,
+          quantity,
         });
       }
 
       const chainPayload = dto.items.map((i) => ({
-        bloodBankId: i.bloodBankId,
+        bloodBankId: i.bloodBankId || dto.hospitalId,
         bloodType: i.bloodType.trim(),
-        quantity: i.quantity,
+        quantity: i.quantityMl ?? i.quantity,
       }));
 
       let transactionHash: string;
@@ -210,7 +217,9 @@ export class BloodRequestsService {
       const parent = this.bloodRequestRepo.create({
         requestNumber,
         hospitalId: dto.hospitalId,
-        requiredBy,
+        requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
+        createdTimestamp: Math.floor(Date.now() / 1000),
+        urgency: dto.urgency || 'ROUTINE',
         deliveryAddress: dto.deliveryAddress?.trim() ?? null,
         notes: dto.notes?.trim() ?? null,
         status: BloodRequestStatus.PENDING,
@@ -218,9 +227,11 @@ export class BloodRequestsService {
         createdByUserId: user.id,
         items: dto.items.map((i) =>
           this.bloodRequestItemRepo.create({
-            bloodBankId: i.bloodBankId,
             bloodType: i.bloodType.trim(),
-            quantity: i.quantity,
+            component: i.component,
+            quantityMl: i.quantityMl || i.quantity,
+            priority: i.priority || 'NORMAL',
+            compatibilityNotes: i.compatibilityNotes,
           }),
         ),
       });
@@ -251,12 +262,13 @@ export class BloodRequestsService {
     const lines = request.items
       .map(
         (i) =>
-          `<li>${i.bloodType} × ${i.quantity} (bank <code>${i.bloodBankId}</code>)</li>`,
+          `<li>${i.bloodType} ${i.component} × ${i.quantityMl}ml (Priority: ${i.priority})</li>`,
       )
       .join('');
+    const requiredByDate = new Date(request.requiredByTimestamp * 1000);
     const html = `
       <p>Blood request <strong>${request.requestNumber}</strong> was created.</p>
-      <p>Required by: ${request.requiredBy.toISOString()}</p>
+      <p>Required by: ${requiredByDate.toISOString()}</p>
       <ul>${lines}</ul>
       <p>On-chain tx: <code>${request.blockchainTxHash ?? 'n/a'}</code></p>
     `;

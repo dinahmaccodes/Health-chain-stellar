@@ -5,6 +5,7 @@
 /// environment. Contract-level integration tests follow at the bottom.
 #[cfg(test)]
 mod pure_matching {
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::Env;
 
     use crate::matching::{
@@ -474,7 +475,7 @@ mod contract_tests {
         Address, Env,
     };
 
-    use crate::{BloodType, MatchingContract, MatchingContractClient, MatchingError};
+    use crate::{BloodType, MatchingContract, MatchingContractClient};
 
     fn setup<'a>() -> (Env, MatchingContractClient<'a>, Address, Address, Address) {
         let env = Env::default();
@@ -494,7 +495,7 @@ mod contract_tests {
 
     #[test]
     fn initialize_sets_state() {
-        let (env, client, admin, _inv, _req) = setup();
+        let (_env, client, admin, _inv, _req) = setup();
         assert!(client.is_initialized());
         assert_eq!(client.get_admin(), admin);
     }
@@ -502,7 +503,7 @@ mod contract_tests {
     #[test]
     #[should_panic(expected = "Error(Contract, #600)")]
     fn double_initialize_panics() {
-        let (env, client, admin, inv, req) = setup();
+        let (_env, client, admin, inv, req) = setup();
         client.initialize(&admin, &inv, &req);
     }
 

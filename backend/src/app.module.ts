@@ -1,15 +1,15 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerGuard } from '@nestjs/throttler';
+
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AnomalyModule } from './anomaly/anomaly.module';
-import { ApprovalModule } from './approvals/approval.module';
 import { BatchImportModule } from './batch-import/batch-import.module';
 import { WorkflowModule } from './workflow/workflow.module';
 import { AuthModule } from './auth/auth.module';
@@ -18,62 +18,32 @@ import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { BloodRequestsModule } from './blood-requests/blood-requests.module';
 import { BloodUnitsModule } from './blood-units/blood-units.module';
-import { ColdChainModule } from './cold-chain/cold-chain.module';
-import { DisputesModule } from './disputes/disputes.module';
-import { DonorEligibilityModule } from './donor-eligibility/donor-eligibility.module';
 import { EventsModule } from './events/events.module';
+import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { CorrelationIdService } from './common/middleware/correlation-id.service';
-import { LoggerModule } from './common/logger/logger.module';
-import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
-import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { AppConfigModule } from './config/config.module';
+import { DatabaseSyncGuard } from './config/database-sync.guard';
 import { DispatchModule } from './dispatch/dispatch.module';
-import { DonationModule } from './donations/donation.module';
 import { DonorImpactModule } from './donor-impact/donor-impact.module';
-import { FeePolicyModule } from './fee-policy/fee-policy.module';
 import { LocationHistoryModule } from './location-history/location-history.module';
 import { HospitalsModule } from './hospitals/hospitals.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MapsModule } from './maps/maps.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { OrdersModule } from './orders/orders.module';
-import { RetentionModule } from './retention/retention.module';
-import { SorobanModule } from './soroban/soroban.module';
-import { SurgeSimulationModule } from './surge-simulation/surge-simulation.module';
+import { UserActivityModule } from './user-activity/user-activity.module';
+import { UsersModule } from './users/users.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { TransparencyModule } from './transparency/transparency.module';
-import { UserActivityModule } from './user-activity/user-activity.module';
-import { ActivityLoggingInterceptor } from './user-activity/interceptors/activity-logging.interceptor';
-import { UsersModule } from './users/users.module';
+
+import type Redis from 'ioredis';
+
+// Placeholder for activity logging interceptor (if exists, else will need to be implemented)
+// import { ActivityLoggingInterceptor } from './common/interceptors/activity-logging.interceptor';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
-    ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_TTL', 60) * 1000,
-            limit: config.get<number>('THROTTLE_LIMIT', 100),
-          },
-          {
-            name: 'auth',
-            ttl: config.get<number>('THROTTLE_AUTH_TTL', 60) * 1000,
-            limit: config.get<number>('THROTTLE_AUTH_LIMIT', 10),
-          },
-        ],
-        storage: config.get<boolean>('THROTTLER_USE_REDIS', true)
-          ? new ThrottlerStorageRedisService({
-              host: config.get<string>('REDIS_HOST', 'localhost'),
-              port: config.get<number>('REDIS_PORT', 6379),
-            })
-          : undefined,
-      }),
-      inject: [ConfigService],
-    }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -88,36 +58,25 @@ import { UsersModule } from './users/users.module';
       }),
       inject: [ConfigService],
     }),
-    ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
-    }),
-    AppConfigModule,
-    SorobanModule,
-    ApprovalModule,
-    DonationModule,
-    OrdersModule,
     UsersModule,
     AuthModule,
     InventoryModule,
-    BlockchainModule,
-    BloodRequestsModule,
-    BloodUnitsModule,
-    DispatchModule,
-    DonorImpactModule,
-    HospitalsModule,
-    LocationHistoryModule,
-    MapsModule,
-    TransparencyModule,
     NotificationsModule,
     UserActivityModule,
     EventsModule,
-    RetentionModule,
     TrackingModule,
-    FeePolicyModule,
     AnomalyModule,
     BatchImportModule,
     WorkflowModule,
-    SurgeSimulationModule,
+    BloodRequestsModule,
+    BloodUnitsModule,
+    BlockchainModule,
+    DispatchModule,
+    DonorImpactModule,
+    LocationHistoryModule,
+    HospitalsModule,
+    MapsModule,
+    TransparencyModule,
   ],
   controllers: [AppController],
   providers: [
@@ -130,10 +89,7 @@ import { UsersModule } from './users/users.module';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
-    { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
-    /** HTTP request/response logging with correlation IDs */
-    { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
-    GlobalExceptionFilter,
+    // { provide: APP_INTERCEPTOR, useClass: ActivityLoggingInterceptor },
     CorrelationIdService,
   ],
 })

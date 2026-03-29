@@ -156,9 +156,6 @@ export class RequestQueryService {
     const pendingRequests = requests.filter(
       (r) => r.status === BloodRequestStatus.PENDING,
     ).length;
-    const approvedRequests = requests.filter(
-      (r) => r.status === BloodRequestStatus.APPROVED,
-    ).length;
     const fulfilledRequests = requests.filter(
       (r) => r.status === BloodRequestStatus.FULFILLED,
     ).length;
@@ -324,7 +321,7 @@ export class RequestQueryService {
       const bloodTypes =
         request.items?.map((item) => item.bloodType).join(', ') || '';
       const totalQuantity =
-        request.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
+        request.items?.reduce((sum, item) => sum + item.quantityMl, 0) || 0;
 
       return [
         request.requestNumber,
