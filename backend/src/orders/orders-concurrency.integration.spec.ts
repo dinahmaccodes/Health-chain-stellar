@@ -15,6 +15,7 @@ import { OrdersGateway } from './gateways/orders.gateway';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrderEventStoreService } from './services/order-event-store.service';
+import { RequestStatusService } from './services/request-status.service';
 import { OrderStateMachine } from './state-machine/order-state-machine';
 
 describe('Orders Inventory Concurrency Integration', () => {
@@ -43,6 +44,7 @@ describe('Orders Inventory Concurrency Integration', () => {
         OrdersService,
         OrderStateMachine,
         OrderEventStoreService,
+        RequestStatusService,
         InventoryService,
         {
           provide: OrdersGateway,

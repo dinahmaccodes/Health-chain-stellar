@@ -9,11 +9,19 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  ValidationPipe,
 } from '@nestjs/common';
 
 import { RequirePermissions } from '../auth/decorators/require-permissions.decorator';
+import { User } from '../auth/decorators/user.decorator';
 import { Permission } from '../auth/enums/permission.enum';
+import { PaginatedResponse, PaginationQueryDto } from '../common/pagination';
 
+import { CreateRiderDto } from './dto/create-rider.dto';
+import { RegisterRiderDto } from './dto/register-rider.dto';
+import { UpdateRiderDto } from './dto/update-rider.dto';
+import { RiderEntity } from './entities/rider.entity';
+import { RiderStatus } from './enums/rider-status.enum';
 import { RidersService } from './riders.service';
 
 @Controller('riders')
@@ -22,14 +30,30 @@ export class RidersController {
 
   @RequirePermissions(Permission.VIEW_RIDERS)
   @Get()
-  findAll(@Query('status') status?: string) {
-    return this.ridersService.findAll(status);
+  findAll(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    paginationDto: PaginationQueryDto,
+    @Query('status') status?: RiderStatus,
+  ): Promise<PaginatedResponse<RiderEntity>> {
+    return this.ridersService.findAll(status, paginationDto);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
   @Get('available')
   getAvailable() {
     return this.ridersService.getAvailableRiders();
+  }
+
+  @RequirePermissions(Permission.VIEW_RIDERS)
+  @Get('leaderboard')
+  getLeaderboard(@Query('limit') limit?: string) {
+    return this.ridersService.getLeaderboard(limit ? parseInt(limit, 10) : 10);
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
@@ -47,26 +71,52 @@ export class RidersController {
   }
 
   @RequirePermissions(Permission.VIEW_RIDERS)
+  @Get('me')
+  getMe(@User('id') userId: string) {
+    return this.ridersService.findByUserId(userId);
+  }
+
+  @RequirePermissions(Permission.VIEW_RIDERS)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ridersService.findOne(id);
   }
 
+  @RequirePermissions(Permission.VIEW_RIDERS)
+  @Get(':id/performance')
+  getPerformance(@Param('id') id: string) {
+    return this.ridersService.getPerformance(id);
+  }
+
+  @Post('register')
+  register(
+    @User('id') userId: string,
+    @Body() registerRiderDto: RegisterRiderDto,
+  ) {
+    return this.ridersService.register(userId, registerRiderDto);
+  }
+
   @RequirePermissions(Permission.CREATE_RIDER)
   @Post()
-  create(@Body() createRiderDto: any) {
+  create(@Body() createRiderDto: CreateRiderDto) {
     return this.ridersService.create(createRiderDto);
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateRiderDto: any) {
+  update(@Param('id') id: string, @Body() updateRiderDto: UpdateRiderDto) {
     return this.ridersService.update(id, updateRiderDto);
+  }
+
+  @RequirePermissions(Permission.MANAGE_RIDERS)
+  @Patch(':id/verify')
+  verify(@Param('id') id: string) {
+    return this.ridersService.verify(id);
   }
 
   @RequirePermissions(Permission.UPDATE_RIDER)
   @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body('status') status: string) {
+  updateStatus(@Param('id') id: string, @Body('status') status: RiderStatus) {
     return this.ridersService.updateStatus(id, status);
   }
 

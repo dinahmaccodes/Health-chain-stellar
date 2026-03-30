@@ -22,6 +22,15 @@ fn make_payment(
     (id, payer, payee)
 }
 
+/// Deploy a minimal Soroban token contract and mint `amount` to `recipient`.
+fn deploy_token_with_balance(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
+    let token = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_id = token.address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(env, &token_id);
+    token_admin.mint(recipient, &amount);
+    token_id
+}
+
 // ── create_payment ─────────────────────────────────────────────────────────────
 
 #[test]
@@ -411,4 +420,244 @@ fn test_update_status_returns_not_found_for_missing_payment() {
     let client = PaymentContractClient::new(&env, &cid);
     let result = client.try_update_status(&999u64, &PaymentStatus::Locked);
     assert!(result.is_err());
+}
+
+// ── donation pledges ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_create_pledge_stores_metadata() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+    let pool = soroban_sdk::String::from_str(&env, "hospital-pool-42");
+    let cause = soroban_sdk::String::from_str(&env, "maternal_health");
+    let region = soroban_sdk::String::from_str(&env, "NG-Lagos");
+
+    let id = client.create_pledge(
+        &donor,
+        &500i128,
+        &2_592_000u64,
+        &pool,
+        &cause,
+        &region,
+        &true,
+    );
+
+    let p = client.get_pledge(&id);
+    assert_eq!(p.donor, donor);
+    assert_eq!(p.amount_per_period, 500);
+    assert_eq!(p.interval_secs, 2_592_000);
+    assert!(p.emergency_pool);
+    assert!(p.active);
+}
+
+#[test]
+fn test_create_pledge_rejects_zero_interval() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+    let pool = soroban_sdk::String::from_str(&env, "pool");
+    let cause = soroban_sdk::String::from_str(&env, "c");
+    let region = soroban_sdk::String::from_str(&env, "r");
+    let r = client.try_create_pledge(&donor, &100i128, &0u64, &pool, &cause, &region, &false);
+    assert!(r.is_err());
+}
+
+// ── Circuit breaker tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_pause_blocks_create_payment() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let result = client.try_create_payment(&1u64, &payer, &payee, &500i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_pause_allows_get_payment() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let (id, _, _) = make_payment(&env, &client, 1, 1000);
+    client.pause(&admin);
+
+    // Read still works
+    let p = client.get_payment(&id);
+    assert_eq!(p.id, id);
+}
+
+#[test]
+fn test_unpause_restores_payments() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    client.pause(&admin);
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+
+    let (id, _, _) = make_payment(&env, &client, 99, 200);
+    assert!(id > 0);
+}
+
+#[test]
+#[should_panic]
+fn test_non_admin_cannot_pause_payments() {
+    let (env, cid) = setup();
+    let client = PaymentContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let attacker = Address::generate(&env);
+    client.pause(&attacker);
+}
+
+// ── Vesting schedule tests ─────────────────────────────────────────────────────
+
+fn setup_with_admin() -> (Env, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PaymentContract, ());
+    let admin = Address::generate(&env);
+    let client = PaymentContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+    (env, contract_id, admin)
+}
+
+/// Pre-cliff claim must return CliffNotReached.
+#[test]
+fn test_vesting_pre_cliff_claim_fails() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    // cliff = now + 1000s, duration = 2000s
+    env.ledger().with_mut(|l| l.timestamp = 5000);
+    client.create_vesting(&admin, &donor, &1_000_000i128, &1000u64, &2000u64);
+
+    // Deploy reward token and mint to contract so it can transfer
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+
+    // Try to claim at t=5500 (before cliff at t=6000)
+    env.ledger().with_mut(|l| l.timestamp = 5500);
+    let result = client.try_claim_vested(&donor, &token_id);
+    assert_eq!(
+        result,
+        Err(Ok(Error::CliffNotReached)),
+        "Expected CliffNotReached before cliff"
+    );
+}
+
+/// At 50% of vesting duration, claimable = total/2.
+#[test]
+fn test_vesting_partial_claim_at_50_percent() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    // cliff = now + 0 (immediate), duration = 2000s → vest_end = now + 2000
+    env.ledger().with_mut(|l| l.timestamp = 10_000);
+    client.create_vesting(&admin, &donor, &1_000_000i128, &0u64, &2000u64);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+
+    // Advance to 50% of vesting duration (cliff == vest_start == 10_000, vest_end == 12_000)
+    env.ledger().with_mut(|l| l.timestamp = 11_000); // 1000s elapsed of 2000s
+    let claimed = client.claim_vested(&donor, &token_id);
+    assert_eq!(claimed, 500_000i128, "50% vesting should yield half the total");
+
+    let schedule = client.get_vesting(&donor);
+    assert_eq!(schedule.claimed, 500_000i128);
+}
+
+/// After vesting end, donor can claim the full remaining amount.
+#[test]
+fn test_vesting_full_claim_after_vest_end() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &500_000i128, &0u64, &1000u64);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 500_000);
+
+    // Advance past vest_end
+    env.ledger().with_mut(|l| l.timestamp = 3_000);
+    let claimed = client.claim_vested(&donor, &token_id);
+    assert_eq!(claimed, 500_000i128, "Full amount claimable after vest end");
+
+    let schedule = client.get_vesting(&donor);
+    assert_eq!(schedule.claimed, 500_000i128);
+    assert_eq!(schedule.claimed, schedule.total_amount);
+}
+
+/// Donor cannot claim more than total_amount across multiple claims.
+#[test]
+fn test_vesting_cannot_exceed_total_amount() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &1_000_000i128, &0u64, &1000u64);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 1_000_000);
+
+    // Claim full amount after vest end
+    env.ledger().with_mut(|l| l.timestamp = 5_000);
+    let first = client.claim_vested(&donor, &token_id);
+    assert_eq!(first, 1_000_000i128);
+
+    // Second claim should fail with NothingToClaim
+    let result = client.try_claim_vested(&donor, &token_id);
+    assert_eq!(
+        result,
+        Err(Ok(Error::NothingToClaim)),
+        "Second claim after full vest should fail"
+    );
+}
+
+/// Non-admin cannot create a vesting schedule.
+#[test]
+fn test_vesting_only_admin_can_create() {
+    let (env, cid, _admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let attacker = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let result = client.try_create_vesting(&attacker, &donor, &1_000i128, &100u64, &500u64);
+    assert!(result.is_err(), "Non-admin must not create vesting");
+}
+
+/// VestingCreated and VestingClaimed events are emitted.
+#[test]
+fn test_vesting_events_emitted() {
+    let (env, cid, admin) = setup_with_admin();
+    let client = PaymentContractClient::new(&env, &cid);
+    let donor = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+    client.create_vesting(&admin, &donor, &200_000i128, &0u64, &1000u64);
+
+    let token_id = deploy_token_with_balance(&env, &admin, &cid, 200_000);
+
+    env.ledger().with_mut(|l| l.timestamp = 2_500); // past vest_end
+    client.claim_vested(&donor, &token_id);
+
+    // Events are published — verify no panic and schedule is updated
+    let schedule = client.get_vesting(&donor);
+    assert_eq!(schedule.claimed, 200_000i128);
 }

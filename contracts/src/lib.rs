@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Map,
-    String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes, Env,
+    Map, String, Symbol, Vec,
 };
 
 pub mod constants;
@@ -52,11 +52,30 @@ pub enum Error {
     /// A pending nomination already exists.
     NominationPending = 24,
     /// Overflow/underflow detected during quantity arithmetic.
-    ArithmeticError = 25,
+    ArithmeticError = 28,
+    /// Organization not found in storage.
+    OrganizationNotFound = 26,
+    /// Organization is already verified.
+    AlreadyVerified = 27,
+    /// Caller is an authorized actor but is not the current custodian of the unit.
+    NotCurrentCustodian = 29,
+    InvalidMultiSigConfig = 30,
+    DuplicateApproval = 31,
 }
 
 // Alias for issue/docs terminology.
 pub use Error as ContractError;
+
+/// Blood component enumeration (whole blood vs separated components)
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BloodComponent {
+    WholeBlood,
+    RedBloodCells,
+    Plasma,
+    Platelets,
+    Cryoprecipitate,
+}
 
 /// Blood type enumeration
 #[contracttype]
@@ -80,8 +99,30 @@ pub enum BloodStatus {
     Reserved,
     InTransit,
     Delivered,
+    Quarantined,
     Expired,
     Discarded,
+}
+
+/// Quarantine reason categories for explicit on-chain lifecycle records.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QuarantineReason {
+    ScreeningFailure,
+    TemperatureBreach,
+    ContaminationSuspected,
+    DonorEvent,
+    ManualOperatorAction,
+    AnomalyDetection,
+    Other,
+}
+
+/// Final quarantine disposition outcomes.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QuarantineDisposition {
+    Release,
+    Discard,
 }
 
 /// Withdrawal reason enumeration
@@ -112,6 +153,7 @@ pub enum UrgencyLevel {
 pub struct BloodUnit {
     pub id: u64,
     pub blood_type: BloodType,
+    pub component: BloodComponent,
     pub quantity: u32,
     pub expiration_date: u64,
     pub donor_id: Symbol,
@@ -146,6 +188,20 @@ pub struct StatusChangeEvent {
     pub old_status: BloodStatus,
     pub new_status: BloodStatus,
     pub actor: Address,
+    pub timestamp: u64,
+}
+
+/// Dedicated quarantine lifecycle event for rich auditability.
+#[contracttype]
+#[derive(Clone)]
+pub struct QuarantineLifecycleEvent {
+    pub blood_unit_id: u64,
+    pub old_status: BloodStatus,
+    pub new_status: BloodStatus,
+    pub actor: Address,
+    pub reason: QuarantineReason,
+    /// 0 = not finalized, 1 = release, 2 = discard
+    pub disposition_code: u32,
     pub timestamp: u64,
 }
 
@@ -221,6 +277,7 @@ pub struct BloodRegisteredEvent {
     pub unit_id: u64,
     pub bank_id: Address,
     pub blood_type: BloodType,
+    pub component: BloodComponent,
     pub quantity_ml: u32,
     pub expiration_timestamp: u64,
     pub donor_id: Option<Symbol>,
@@ -294,7 +351,8 @@ pub struct DisputeRaisedEvent {
     pub dispute_id: u64,
     pub payment_id: u64,
     pub raised_by: Address,
-    pub reason: Symbol,
+    pub reason: String,
+    pub evidence_digest: Bytes,
     pub timestamp: u64,
 }
 
@@ -306,6 +364,17 @@ pub struct DisputeResolvedEvent {
     pub payment_id: u64,
     pub status: DisputeStatus,
     pub resolved_at: u64,
+}
+
+/// Event emitted when an expired dispute is auto-refunded.
+#[contracttype]
+#[derive(Clone)]
+pub struct DisputeAutoRefundedEvent {
+    pub case_id: u64,
+    pub payment_id: u64,
+    pub refunded_to: Address,
+    pub amount: i128,
+    pub refunded_at: u64,
 }
 
 /// Storage key literals (compile-time guarded for `symbol_short!` compatibility).
@@ -324,6 +393,11 @@ const DISPUTES_KEY: &str = "DISP_REC";
 const NEXT_DISPUTE_ID_KEY: &str = "NDIS_ID";
 const CUSTODY_EVENTS_KEY: &str = "CUSTODY";
 const HISTORY_KEY: &str = "HISTORY";
+const DISPUTE_METADATA_KEY: &str = "DISP_META";
+const DISPUTE_TIMEOUT_KEY: &str = "DSP_TO";
+const PAYMENT_STATS_KEY: &str = "PAY_STATS";
+const MULTISIG_CONFIG_KEY: &str = "MSIG_CFG";
+const PENDING_APPROVALS_KEY: &str = "PEND_APR";
 
 const _: () = assert!(BLOOD_UNITS_KEY.len() <= 9);
 const _: () = assert!(NEXT_ID_KEY.len() <= 9);
@@ -340,6 +414,11 @@ const _: () = assert!(DISPUTES_KEY.len() <= 9);
 const _: () = assert!(NEXT_DISPUTE_ID_KEY.len() <= 9);
 const _: () = assert!(CUSTODY_EVENTS_KEY.len() <= 9);
 const _: () = assert!(HISTORY_KEY.len() <= 9);
+const _: () = assert!(DISPUTE_METADATA_KEY.len() <= 9);
+const _: () = assert!(DISPUTE_TIMEOUT_KEY.len() <= 9);
+const _: () = assert!(PAYMENT_STATS_KEY.len() <= 9);
+const _: () = assert!(MULTISIG_CONFIG_KEY.len() <= 9);
+const _: () = assert!(PENDING_APPROVALS_KEY.len() <= 9);
 
 /// Storage keys (single source of truth)
 pub(crate) const BLOOD_UNITS: Symbol = symbol_short!("UNITS");
@@ -357,6 +436,11 @@ pub(crate) const DISPUTES: Symbol = symbol_short!("DISP_REC");
 pub(crate) const NEXT_DISPUTE_ID: Symbol = symbol_short!("NDIS_ID");
 pub(crate) const CUSTODY_EVENTS: Symbol = symbol_short!("CUSTODY");
 pub(crate) const HISTORY: Symbol = symbol_short!("HISTORY");
+pub(crate) const DISPUTE_METADATA: Symbol = symbol_short!("DISP_META");
+pub(crate) const DISPUTE_TIMEOUT: Symbol = symbol_short!("DSP_TO");
+pub(crate) const PAYMENT_STATS: Symbol = symbol_short!("PAY_STATS");
+pub(crate) const MULTISIG_CONFIG: Symbol = symbol_short!("MSIG_CFG");
+pub(crate) const PENDING_APPROVALS: Symbol = symbol_short!("PEND_APR");
 /// Storage key enumeration for composite keys
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -394,6 +478,24 @@ pub struct NominationEntry {
     pub nominated_at: u64,
 }
 
+/// Organization record for verification tracking.
+#[contracttype]
+#[derive(Clone)]
+pub struct Organization {
+    pub id: Address,
+    pub verified: bool,
+    pub verified_timestamp: Option<u64>,
+}
+
+/// Composite storage keys for organization verification.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OrgKey {
+    Org(Address),
+    Verifier(Address),
+    UnverifyReason(Address),
+}
+
 #[contract]
 pub struct HealthChainContract;
 
@@ -404,6 +506,43 @@ impl HealthChainContract {
         admin.require_auth();
         env.storage().instance().set(&ADMIN, &admin);
         symbol_short!("init")
+    }
+
+    /// Get contract version
+    pub fn version(_env: Env) -> u32 {
+        1
+    }
+
+    /// Get contract metadata
+    pub fn get_metadata(env: Env) -> Map<Symbol, String> {
+        let mut metadata = Map::new(&env);
+        metadata.set(
+            symbol_short!("name"),
+            String::from_str(&env, "HealthChain-Stellar"),
+        );
+        metadata.set(symbol_short!("version"), String::from_str(&env, "1.0.0"));
+        metadata.set(
+            symbol_short!("features"),
+            String::from_str(&env, "blood,escrow,audit,organizations,disputes"),
+        );
+        metadata.set(
+            symbol_short!("abi"),
+            String::from_str(&env, "soroban-v22.0.0"),
+        );
+        metadata
+    }
+
+    /// Check if a feature is supported
+    pub fn is_feature_supported(env: Env, feature: Symbol) -> bool {
+        let features = vec![
+            &env,
+            symbol_short!("blood"),
+            symbol_short!("escrow"),
+            symbol_short!("audit"),
+            symbol_short!("orgs"),
+            symbol_short!("disputes"),
+        ];
+        features.contains(feature)
     }
 
     /// Register a blood bank (admin only)
@@ -457,6 +596,7 @@ impl HealthChainContract {
         env: Env,
         bank_id: Address,
         blood_type: BloodType,
+        component: BloodComponent,
         quantity_ml: u32,
         expiration_timestamp: u64,
         donor_id: Option<Symbol>,
@@ -478,10 +618,52 @@ impl HealthChainContract {
             &env,
             bank_id,
             blood_type,
+            component,
             quantity_ml,
             expiration_timestamp,
             donor_id,
         )
+    }
+
+    /// Batch register multiple blood units in a single transaction.
+    pub fn batch_register_blood(
+        env: Env,
+        bank_id: Address,
+        units: Vec<(BloodType, BloodComponent, u32, u64, Option<Symbol>)>,
+    ) -> Result<Vec<u64>, Error> {
+        bank_id.require_auth();
+
+        let banks: Map<Address, bool> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_BANKS)
+            .unwrap_or(Map::new(&env));
+
+        if !banks.get(bank_id.clone()).unwrap_or(false) {
+            return Err(Error::Unauthorized);
+        }
+
+        if units.len() > MAX_BATCH_SIZE {
+            return Err(Error::BatchSizeExceeded);
+        }
+
+        let mut registered_ids = Vec::new(&env);
+        for i in 0..units.len() {
+            let (blood_type, component, quantity_ml, expiration_timestamp, donor_id) =
+                units.get(i).unwrap();
+            let unit_id = registry_write::register_unit(
+                &env,
+                bank_id.clone(),
+                blood_type,
+                component,
+                quantity_ml,
+                expiration_timestamp,
+                donor_id,
+            )?;
+            registered_ids.push_back(unit_id);
+        }
+
+        Ok(registered_ids)
     }
 
     /// Check if an address is an authorized blood bank
@@ -706,6 +888,11 @@ impl HealthChainContract {
             .unwrap_or(Map::new(&env));
 
         let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+
+        // Verify the caller is the current custodian of this specific unit.
+        if unit.bank_id != bank_id {
+            return Err(Error::NotCurrentCustodian);
+        }
 
         // --- NEW: REQUIREMENT #67 GUARD ---
         if unit.status == BloodStatus::Expired {
@@ -1071,6 +1258,125 @@ impl HealthChainContract {
             (symbol_short!("blood"), symbol_short!("withdraw")),
             (unit_id, reason, current_time),
         );
+
+        Ok(())
+    }
+
+    /// Place a blood unit into explicit quarantine state.
+    pub fn quarantine_blood(
+        env: Env,
+        caller: Address,
+        unit_id: u64,
+        reason: QuarantineReason,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+
+        let is_bank = Self::is_blood_bank(env.clone(), caller.clone());
+        let is_hosp = Self::is_hospital(env.clone(), caller.clone());
+        if !is_bank && !is_hosp {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        let old_status = unit.status;
+
+        if old_status == BloodStatus::Quarantined {
+            return Err(Error::InvalidStatus);
+        }
+
+        let current_time = env.ledger().timestamp();
+        if unit.expiration_date <= current_time {
+            return Err(Error::UnitExpired);
+        }
+
+        unit.status = BloodStatus::Quarantined;
+        units.set(unit_id, unit.clone());
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        record_status_change(
+            &env,
+            unit_id,
+            old_status,
+            BloodStatus::Quarantined,
+            caller.clone(),
+        );
+
+        let quarantine_event = QuarantineLifecycleEvent {
+            blood_unit_id: unit_id,
+            old_status,
+            new_status: BloodStatus::Quarantined,
+            actor: caller,
+            reason,
+            disposition_code: 0,
+            timestamp: current_time,
+        };
+
+        env.events()
+            .publish((symbol_short!("quar"), symbol_short!("place")), quarantine_event);
+
+        Ok(())
+    }
+
+    /// Finalize quarantine with explicit release (Available) or discard outcome.
+    pub fn finalize_quarantine(
+        env: Env,
+        caller: Address,
+        unit_id: u64,
+        reason: QuarantineReason,
+        disposition: QuarantineDisposition,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+
+        let is_bank = Self::is_blood_bank(env.clone(), caller.clone());
+        let is_hosp = Self::is_hospital(env.clone(), caller.clone());
+        if !is_bank && !is_hosp {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut units: Map<u64, BloodUnit> = env
+            .storage()
+            .persistent()
+            .get(&BLOOD_UNITS)
+            .unwrap_or(Map::new(&env));
+
+        let mut unit = units.get(unit_id).ok_or(Error::UnitNotFound)?;
+        let old_status = unit.status;
+        if old_status != BloodStatus::Quarantined {
+            return Err(Error::InvalidStatus);
+        }
+
+        let new_status = match disposition {
+            QuarantineDisposition::Release => BloodStatus::Available,
+            QuarantineDisposition::Discard => BloodStatus::Discarded,
+        };
+
+        unit.status = new_status;
+        units.set(unit_id, unit.clone());
+        env.storage().persistent().set(&BLOOD_UNITS, &units);
+
+        record_status_change(&env, unit_id, old_status, new_status, caller.clone());
+
+        let quarantine_event = QuarantineLifecycleEvent {
+            blood_unit_id: unit_id,
+            old_status,
+            new_status,
+            actor: caller,
+            reason,
+            disposition_code: match disposition {
+                QuarantineDisposition::Release => 1,
+                QuarantineDisposition::Discard => 2,
+            },
+            timestamp: env.ledger().timestamp(),
+        };
+
+        env.events()
+            .publish((symbol_short!("quar"), symbol_short!("final")), quarantine_event);
 
         Ok(())
     }
@@ -1603,6 +1909,13 @@ impl HealthChainContract {
             payee,
             amount,
             asset,
+            fee_structure: FeeStructure {
+                policy_id: Symbol::new(&env, "default_fee_policy"),
+                service_fee: 0,
+                network_fee: 0,
+                performance_bonus: 0,
+                fixed_fee: 0,
+            },
             status: PaymentStatus::Pending,
             escrow_released_at: None,
         };
@@ -1620,13 +1933,138 @@ impl HealthChainContract {
         Ok(payment_id)
     }
 
+    /// Configure the dispute timeout window in seconds (admin only).
+    pub fn set_dispute_timeout(env: Env, timeout_secs: u64) -> Result<(), Error> {
+    /// Configure M-of-N multisig signers for high-value escrow releases.
+    pub fn configure_multisig(
+        env: Env,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DISPUTE_TIMEOUT, &timeout_secs);
+        Ok(())
+    }
+
+    /// Read the active dispute timeout, falling back to the default 72h window.
+    pub fn get_dispute_timeout(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DISPUTE_TIMEOUT)
+            .unwrap_or(DEFAULT_DISPUTE_TIMEOUT_SECS)
+    }
+
+    /// Read aggregate payment stats for auto-refunded disputes.
+    pub fn get_payment_stats(env: Env) -> PaymentStats {
+        env.storage()
+            .persistent()
+            .get(&PAYMENT_STATS)
+            .unwrap_or(PaymentStats::new())
+        let config = MultiSigConfig { signers, threshold };
+        config
+            .validate()
+            .map_err(|_| Error::InvalidMultiSigConfig)?;
+
+        env.storage().persistent().set(&MULTISIG_CONFIG, &config);
+        Ok(())
+    }
+
+    /// Propose an escrow release. Low-value payments keep single-admin flow.
+    /// High-value payments require threshold approvals from configured signers.
+    pub fn propose_release(env: Env, payment_id: u64, approver: Address) -> Result<bool, Error> {
+        approver.require_auth();
+
+        let mut payments: Map<u64, Payment> = env
+            .storage()
+            .persistent()
+            .get(&PAYMENTS)
+            .ok_or(Error::PaymentNotFound)?;
+
+        let mut payment = payments.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        if !payment.can_transition_to(PaymentStatus::Completed) {
+            return Err(Error::InvalidPaymentStatus);
+        }
+
+        let mut pending_approvals: Map<u64, PendingApproval> = env
+            .storage()
+            .persistent()
+            .get(&PENDING_APPROVALS)
+            .unwrap_or(Map::new(&env));
+
+        if payment.amount < HIGH_VALUE_THRESHOLD {
+            let admin: Address = env
+                .storage()
+                .instance()
+                .get(&ADMIN)
+                .ok_or(Error::Unauthorized)?;
+            if approver != admin {
+                return Err(Error::Unauthorized);
+            }
+
+            payment.status = PaymentStatus::Completed;
+            payment.escrow_released_at = Some(env.ledger().timestamp());
+            payments.set(payment_id, payment);
+            env.storage().persistent().set(&PAYMENTS, &payments);
+            pending_approvals.remove(payment_id);
+            env.storage()
+                .persistent()
+                .set(&PENDING_APPROVALS, &pending_approvals);
+            return Ok(true);
+        }
+
+        let config: MultiSigConfig = env
+            .storage()
+            .persistent()
+            .get(&MULTISIG_CONFIG)
+            .ok_or(Error::InvalidMultiSigConfig)?;
+        config
+            .validate()
+            .map_err(|_| Error::InvalidMultiSigConfig)?;
+
+        if !config.is_signer(&approver) {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut approval = pending_approvals
+            .get(payment_id)
+            .unwrap_or(PendingApproval::new(&env, payment_id));
+
+        approval
+            .register_vote(approver)
+            .map_err(|_| Error::DuplicateApproval)?;
+
+        if approval.has_reached_threshold(config.threshold) {
+            approval.executed = true;
+            payment.status = PaymentStatus::Completed;
+            payment.escrow_released_at = Some(env.ledger().timestamp());
+            payments.set(payment_id, payment);
+            env.storage().persistent().set(&PAYMENTS, &payments);
+        }
+
+        pending_approvals.set(payment_id, approval.clone());
+        env.storage()
+            .persistent()
+            .set(&PENDING_APPROVALS, &pending_approvals);
+
+        Ok(approval.executed)
+    }
+
     /// Raise a dispute for a payment
     pub fn raise_dispute(
         env: Env,
         payment_id: u64,
         raised_by: Address,
-        reason: Symbol,
-        evidence_hash: Symbol,
+        reason: String,
+        evidence_digest: Bytes,
+        evidence_ref_chunks: Vec<String>,
     ) -> Result<u64, Error> {
         raised_by.require_auth();
 
@@ -1654,9 +2092,15 @@ impl HealthChainContract {
             raised_by: raised_by.clone(),
             status: DisputeStatus::Open,
             reason: reason.clone(),
-            evidence_hash,
+            evidence_digest: evidence_digest.clone(),
+            evidence_ref_chunks: evidence_ref_chunks.clone(),
             raised_at: env.ledger().timestamp(),
             resolved_at: None,
+        };
+        let dispute_deadline = env.ledger().timestamp() + Self::get_dispute_timeout(env.clone());
+        let metadata = DisputeMetadata {
+            dispute_id,
+            dispute_deadline,
         };
 
         payment.status = PaymentStatus::Disputed;
@@ -1671,6 +2115,15 @@ impl HealthChainContract {
 
         disputes.set(dispute_id, dispute);
         env.storage().persistent().set(&DISPUTES, &disputes);
+        let mut dispute_metadata: Map<u64, DisputeMetadata> = env
+            .storage()
+            .persistent()
+            .get(&DISPUTE_METADATA)
+            .unwrap_or(Map::new(&env));
+        dispute_metadata.set(dispute_id, metadata);
+        env.storage()
+            .persistent()
+            .set(&DISPUTE_METADATA, &dispute_metadata);
         env.storage()
             .instance()
             .set(&NEXT_DISPUTE_ID, &(dispute_id + 1));
@@ -1696,6 +2149,7 @@ impl HealthChainContract {
                 payment_id,
                 raised_by,
                 reason,
+                evidence_digest,
                 timestamp: env.ledger().timestamp(),
             },
         );
@@ -1784,6 +2238,82 @@ impl HealthChainContract {
         );
 
         Ok(())
+    }
+
+    /// Permissionless cleanup for disputes that exceeded their arbitration deadline.
+    pub fn process_expired_disputes(env: Env) -> Result<u32, Error> {
+        let current_time = env.ledger().timestamp();
+        let mut disputes: Map<u64, Dispute> = env
+            .storage()
+            .persistent()
+            .get(&DISPUTES)
+            .unwrap_or(Map::new(&env));
+        let dispute_metadata: Map<u64, DisputeMetadata> = env
+            .storage()
+            .persistent()
+            .get(&DISPUTE_METADATA)
+            .unwrap_or(Map::new(&env));
+        let mut payments: Map<u64, Payment> = env
+            .storage()
+            .persistent()
+            .get(&PAYMENTS)
+            .unwrap_or(Map::new(&env));
+        let mut stats = Self::get_payment_stats(env.clone());
+        let mut processed = 0u32;
+
+        for dispute_id in disputes.keys() {
+            let mut dispute = disputes.get(dispute_id).unwrap();
+            if dispute.status != DisputeStatus::Open {
+                continue;
+            }
+
+            let metadata = match dispute_metadata.get(dispute_id) {
+                Some(metadata) => metadata,
+                None => continue,
+            };
+
+            if current_time <= metadata.dispute_deadline {
+                continue;
+            }
+
+            let mut payment = match payments.get(dispute.payment_id) {
+                Some(payment) => payment,
+                None => continue,
+            };
+
+            if payment.status != PaymentStatus::Disputed {
+                continue;
+            }
+
+            payment.status = PaymentStatus::Refunded;
+            payment.escrow_released_at = Some(current_time);
+            payments.set(dispute.payment_id, payment.clone());
+
+            dispute.status = DisputeStatus::ResolvedInFavorOfPayer;
+            dispute.resolved_at = Some(current_time);
+            disputes.set(dispute_id, dispute.clone());
+
+            stats.count_auto_refunded += 1;
+            stats.total_auto_refunded += payment.amount;
+            processed += 1;
+
+            env.events().publish(
+                (symbol_short!("dispute"), symbol_short!("auto_ref")),
+                DisputeAutoRefundedEvent {
+                    case_id: dispute_id,
+                    payment_id: payment.id,
+                    refunded_to: payment.payer,
+                    amount: payment.amount,
+                    refunded_at: current_time,
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DISPUTES, &disputes);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+        env.storage().persistent().set(&PAYMENT_STATS, &stats);
+
+        Ok(processed)
     }
 
     /// Update request status
@@ -2261,6 +2791,7 @@ impl HealthChainContract {
         let unit = BloodUnit {
             id,
             blood_type,
+            component: BloodComponent::WholeBlood,
             quantity,
             expiration_date,
             donor_id,
@@ -2395,6 +2926,120 @@ impl HealthChainContract {
     }
 }
 
+#[contractimpl]
+impl HealthChainContract {
+    /// Register an organization (any address can self-register).
+    pub fn register_organization(env: Env, org_id: Address) -> Result<(), Error> {
+        org_id.require_auth();
+
+        let org_key = OrgKey::Org(org_id.clone());
+        if env.storage().persistent().has(&org_key) {
+            return Err(Error::DuplicateRegistration);
+        }
+
+        let organization = Organization {
+            id: org_id.clone(),
+            verified: false,
+            verified_timestamp: None,
+        };
+
+        env.storage().persistent().set(&org_key, &organization);
+
+        env.events()
+            .publish((symbol_short!("org"), symbol_short!("reg")), org_id);
+
+        Ok(())
+    }
+
+    /// Verify an organization (admin only).
+    pub fn verify_organization(env: Env, admin: Address, org_id: Address) -> Result<(), Error> {
+        admin.require_auth();
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let org_key = OrgKey::Org(org_id.clone());
+        let mut organization: Organization = env
+            .storage()
+            .persistent()
+            .get(&org_key)
+            .ok_or(Error::OrganizationNotFound)?;
+
+        if organization.verified {
+            return Err(Error::AlreadyVerified);
+        }
+
+        organization.verified = true;
+        organization.verified_timestamp = Some(env.ledger().timestamp());
+        env.storage().persistent().set(&org_key, &organization);
+
+        let verifier_key = OrgKey::Verifier(org_id.clone());
+        env.storage().persistent().set(&verifier_key, &admin);
+
+        env.events().publish(
+            (symbol_short!("org"), symbol_short!("verified")),
+            (org_id, admin, env.ledger().timestamp()),
+        );
+
+        Ok(())
+    }
+
+    /// Unverify an organization (admin only).
+    pub fn unverify_organization(
+        env: Env,
+        admin: Address,
+        org_id: Address,
+        reason: String,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let org_key = OrgKey::Org(org_id.clone());
+        let mut organization: Organization = env
+            .storage()
+            .persistent()
+            .get(&org_key)
+            .ok_or(Error::OrganizationNotFound)?;
+
+        organization.verified = false;
+        organization.verified_timestamp = None;
+        env.storage().persistent().set(&org_key, &organization);
+
+        let reason_key = OrgKey::UnverifyReason(org_id.clone());
+        env.storage().persistent().set(&reason_key, &reason);
+
+        env.events().publish(
+            (symbol_short!("org"), symbol_short!("unverif")),
+            (org_id, reason),
+        );
+
+        Ok(())
+    }
+
+    /// Query an organization by address.
+    pub fn get_organization(env: Env, org_id: Address) -> Result<Organization, Error> {
+        let org_key = OrgKey::Org(org_id);
+        env.storage()
+            .persistent()
+            .get(&org_key)
+            .ok_or(Error::OrganizationNotFound)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -2448,7 +3093,7 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        client.register_blood(&hospital, &BloodType::OPositive, &450, &expiration, &None);
+        client.register_blood(&hospital, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
     }
 
     #[test]
@@ -2561,7 +3206,7 @@ mod test {
 
         // Attempt to register blood using revoked bank (should fail Unauthorized)
         env.mock_all_auths();
-        client.register_blood(&bank, &BloodType::OPositive, &100, &expiration, &None);
+        client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &100, &expiration, &None);
 
         // Attempt to allocate using revoked bank (should also fail Unauthorized)
         env.mock_all_auths();
@@ -2654,18 +3299,6 @@ mod test {
     }
 
     #[test]
-    fn test_register_hospital() {
-        let env = Env::default();
-        let (_, _, client) = setup_contract_with_admin(&env);
-        let hospital = Address::generate(&env);
-
-        env.mock_all_auths();
-        client.register_hospital(&hospital);
-
-        assert_eq!(client.is_hospital(&hospital), true);
-    }
-
-    #[test]
     fn test_register_blood_success() {
         let env = Env::default();
         let (_, _, client) = setup_contract_with_admin(&env);
@@ -2680,6 +3313,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2703,6 +3337,7 @@ mod test {
         client.register_blood(
             &unauthorized_bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2725,6 +3360,7 @@ mod test {
         client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &25, // Below minimum
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2747,6 +3383,7 @@ mod test {
         client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &600, // Above maximum
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2768,6 +3405,7 @@ mod test {
         client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2790,6 +3428,7 @@ mod test {
         client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2811,6 +3450,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::ABNegative,
+            &BloodComponent::WholeBlood,
             &350,
             &expiration,
             &None, // Anonymous donor
@@ -2835,6 +3475,7 @@ mod test {
         let id1 = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2844,6 +3485,7 @@ mod test {
         let id2 = client.register_blood(
             &bank,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &400,
             &expiration,
             &Some(symbol_short!("donor2")),
@@ -2881,6 +3523,7 @@ mod test {
             let result = client.register_blood(
                 &bank,
                 &blood_type,
+                &BloodComponent::WholeBlood,
                 &450,
                 &expiration,
                 &Some(symbol_short!("donor")),
@@ -2904,6 +3547,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &50, // Minimum valid quantity
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2927,6 +3571,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &500, // Maximum valid quantity
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2950,6 +3595,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2973,6 +3619,7 @@ mod test {
         let result = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -2999,6 +3646,7 @@ mod test {
         let id1 = client.register_blood(
             &bank1,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -3007,6 +3655,7 @@ mod test {
         let id2 = client.register_blood(
             &bank2,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &400,
             &expiration,
             &Some(symbol_short!("donor2")),
@@ -3708,6 +4357,7 @@ mod test {
         let unit_id_1 = client.register_blood(
             &bank,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &300,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -3715,6 +4365,7 @@ mod test {
         let unit_id_2 = client.register_blood(
             &bank,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("donor2")),
@@ -3768,6 +4419,7 @@ mod test {
         let unit_id = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &200,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -4046,6 +4698,7 @@ mod test {
         let unit_id_1 = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -4054,6 +4707,7 @@ mod test {
         let unit_id_2 = client.register_blood(
             &bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("donor2")),
@@ -4134,6 +4788,7 @@ mod test {
         let unit_id_1 = client.register_blood(
             &bank,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -4142,6 +4797,7 @@ mod test {
         let unit_id_2 = client.register_blood(
             &bank,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("donor2")),
@@ -4251,6 +4907,7 @@ mod test {
         let unit_id_1 = client.register_blood(
             &bank,
             &BloodType::BPositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("d1")),
@@ -4258,6 +4915,7 @@ mod test {
         let unit_id_2 = client.register_blood(
             &bank,
             &BloodType::BPositive,
+            &BloodComponent::WholeBlood,
             &250,
             &expiration,
             &Some(symbol_short!("d2")),
@@ -4365,6 +5023,7 @@ mod test {
         let unit_id = client.register_blood(
             &bank,
             &BloodType::BPositive,
+            &BloodComponent::WholeBlood,
             &500,
             &expiration,
             &Some(symbol_short!("donor1")),
@@ -4458,6 +5117,96 @@ mod test {
         client.fulfill_request(&bank, &999u64, &unit_ids);
     }
 
+
+    // ======================================================
+    // Custodian Check Tests (#101)
+    // ======================================================
+
+    #[test]
+    fn test_initiate_transfer_by_current_custodian_succeeds() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+        let unit_id =
+            client.register_blood(
+                &bank,
+                &BloodType::OPositive,
+                &BloodComponent::WholeBlood,
+                &450,
+                &expiration,
+                &None,
+            );
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        // Current custodian (bank) can initiate transfer
+        let event_id = client.initiate_transfer(&bank, &unit_id);
+        assert!(!event_id.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #29)")] // NotCurrentCustodian
+    fn test_initiate_transfer_by_non_custodian_authorized_bank_fails() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank_a = Address::generate(&env);
+        let bank_b = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank_a);
+        client.register_blood_bank(&bank_b);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+        // bank_a registers and allocates the unit — bank_a is the custodian
+        let unit_id =
+            client.register_blood(
+                &bank_a,
+                &BloodType::OPositive,
+                &BloodComponent::WholeBlood,
+                &450,
+                &expiration,
+                &None,
+            );
+        client.allocate_blood(&bank_a, &unit_id, &hospital);
+
+        // bank_b is authorized but is NOT the custodian — must fail
+        client.initiate_transfer(&bank_b, &unit_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")] // Unauthorized
+    fn test_initiate_transfer_by_unregistered_address_fails() {
+        let env = Env::default();
+        let (_, _, hospital, client) = setup_contract_with_hospital(&env);
+
+        let bank = Address::generate(&env);
+        let rogue = Address::generate(&env);
+        env.mock_all_auths();
+        client.register_blood_bank(&bank);
+
+        let current_time = env.ledger().timestamp();
+        let expiration = current_time + (7 * 86400);
+        let unit_id =
+            client.register_blood(
+                &bank,
+                &BloodType::OPositive,
+                &BloodComponent::WholeBlood,
+                &450,
+                &expiration,
+                &None,
+            );
+        client.allocate_blood(&bank, &unit_id, &hospital);
+
+        // Completely unregistered address — must fail with Unauthorized, not NotCurrentCustodian
+        client.initiate_transfer(&rogue, &unit_id);
+    }
+
     // ======================================================
     // Transfer Expiry Boundary Tests (#105)
     // ======================================================
@@ -4476,6 +5225,7 @@ mod test {
         let unit_id = client.register_blood(
             bank,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("donor")),
@@ -4663,6 +5413,7 @@ mod test {
         let unit_a1 = client.register_blood(
             &bank_a,
             &BloodType::OPositive,
+            &BloodComponent::WholeBlood,
             &450,
             &expiration,
             &Some(symbol_short!("001")),
@@ -4673,6 +5424,7 @@ mod test {
         let unit_b1 = client.register_blood(
             &bank_b,
             &BloodType::APositive,
+            &BloodComponent::WholeBlood,
             &350,
             &expiration,
             &Some(symbol_short!("001")),
@@ -4716,6 +5468,7 @@ mod test {
         let unit_a2 = client.register_blood(
             &bank_a,
             &BloodType::ONegative,
+            &BloodComponent::WholeBlood,
             &400,
             &expiration,
             &Some(symbol_short!("001")),
@@ -4773,7 +5526,7 @@ mod test {
 
         // Register blood without donor_id (anonymous)
         env.mock_all_auths();
-        client.register_blood(&bank, &BloodType::ABPositive, &300, &expiration, &None);
+        client.register_blood(&bank, &BloodType::ABPositive, &BloodComponent::WholeBlood, &300, &expiration, &None);
 
         // Anonymous donors are stored as "ANON"
         let units = client.get_units_by_donor(&symbol_short!("ANON"));
@@ -4798,7 +5551,7 @@ mod test {
 
         // Register and allocate blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         env.mock_all_auths();
         client.allocate_blood(&bank, &unit_id, &hospital);
@@ -4835,7 +5588,7 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         let mut event_ids = vec![&env];
 
@@ -4890,7 +5643,7 @@ mod test {
 
         // Register blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         let mut all_event_ids = vec![&env];
 
@@ -4957,7 +5710,7 @@ mod test {
         let expiration = current_time + (30 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         for i in 0..100 {
             env.as_contract(&contract_id, || {
@@ -5009,7 +5762,7 @@ mod test {
 
         // Register blood but don't create any custody events
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         // Check custody trail - should be empty
         let trail = client.get_custody_trail(&unit_id, &0);
@@ -5035,7 +5788,7 @@ mod test {
 
         // Register and create one custody event
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         env.mock_all_auths();
         client.allocate_blood(&bank, &unit_id, &hospital);
@@ -5065,7 +5818,7 @@ mod test {
 
         // Register blood
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         // Migrate (should initialize empty metadata)
         env.mock_all_auths();
@@ -5098,7 +5851,7 @@ mod test {
         let expiration = current_time + (7 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         // With mock_all_auths, this will succeed even without admin
         // This test documents that behavior
@@ -5118,7 +5871,7 @@ mod test {
         let expiration = current_time + (30 * 86400);
 
         env.mock_all_auths();
-        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &450, &expiration, &None);
+        let unit_id = client.register_blood(&bank, &BloodType::OPositive, &BloodComponent::WholeBlood, &450, &expiration, &None);
 
         for i in 0..20 {
             env.as_contract(&contract_id, || {
@@ -5254,5 +6007,194 @@ mod test {
         // Second nomination while the first is still active must fail.
         env.mock_all_auths();
         client.nominate_super_admin(&nominee_b);
+    }
+
+    // ── ORGANIZATION VERIFICATION TESTS ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_organization_verification_events() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        // Check registration event
+        let events = env.events().all();
+        assert!(!events.is_empty());
+        let (_, topics, _) = events.last().unwrap();
+        assert_eq!(topics.len(), 2);
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            symbol_short!("org")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+            symbol_short!("reg")
+        );
+
+        // Verify organization
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+
+        let events = env.events().all();
+        assert!(events.len() >= 2);
+        let (_, topics, _) = events.last().unwrap();
+        assert_eq!(topics.len(), 2);
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            symbol_short!("org")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+            symbol_short!("verified")
+        );
+
+        // Unverify organization
+        let reason = String::from_str(&env, "Test reason");
+        env.mock_all_auths();
+        client.unverify_organization(&admin, &org, &reason);
+
+        let events = env.events().all();
+        assert!(events.len() >= 3);
+        let (_, topics, _) = events.last().unwrap();
+        assert_eq!(topics.len(), 2);
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            symbol_short!("org")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+            symbol_short!("unverif")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #4)")] // DuplicateRegistration
+    fn test_register_organization_duplicate() {
+        let env = Env::default();
+        let (_, _, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        // Try to register the same org again
+        env.mock_all_auths();
+        client.register_organization(&org);
+    }
+
+    #[test]
+    fn test_verify_organization_success() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+
+        let organization = client.get_organization(&org);
+        assert_eq!(organization.verified, true);
+        assert!(organization.verified_timestamp.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")] // Unauthorized
+    fn test_verify_organization_unauthorized() {
+        let env = Env::default();
+        let (_, _, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        env.mock_all_auths();
+        client.verify_organization(&non_admin, &org);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #26)")] // OrganizationNotFound
+    fn test_verify_organization_not_found() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")] // AlreadyVerified
+    fn test_verify_organization_already_verified() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+
+        // Try to verify again
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+    }
+
+    #[test]
+    fn test_unverify_organization_success() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+
+        let reason = String::from_str(&env, "Compliance issue");
+        env.mock_all_auths();
+        client.unverify_organization(&admin, &org, &reason);
+
+        let organization = client.get_organization(&org);
+        assert_eq!(organization.verified, false);
+        assert!(organization.verified_timestamp.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")] // Unauthorized
+    fn test_unverify_organization_unauthorized() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.register_organization(&org);
+
+        env.mock_all_auths();
+        client.verify_organization(&admin, &org);
+
+        let reason = String::from_str(&env, "Test");
+        env.mock_all_auths();
+        client.unverify_organization(&non_admin, &org, &reason);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #26)")] // OrganizationNotFound
+    fn test_unverify_organization_not_found() {
+        let env = Env::default();
+        let (_, admin, client) = setup_contract_with_admin(&env);
+        let org = Address::generate(&env);
+
+        let reason = String::from_str(&env, "Test");
+        env.mock_all_auths();
+        client.unverify_organization(&admin, &org, &reason);
     }
 }

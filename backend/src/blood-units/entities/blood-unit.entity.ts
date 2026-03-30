@@ -74,6 +74,7 @@ export class BloodUnit extends BaseEntity {
   id: string;
 
   @Column({ name: 'unit_code', type: 'varchar', unique: true })
+
   unitCode: string;
 
   @Column({ name: 'blood_type', type: 'enum', enum: BloodType })
@@ -100,7 +101,11 @@ export class BloodUnit extends BaseEntity {
   @Column({ name: 'test_results', type: 'jsonb', nullable: true })
   testResults: Record<string, unknown> | null;
 
-  @Column({ name: 'storage_temperature_celsius', type: 'float', nullable: true })
+  @Column({
+    name: 'storage_temperature_celsius',
+    type: 'float',
+    nullable: true,
+  })
   storageTemperatureCelsius: number | null;
 
   @Column({ name: 'storage_location', type: 'varchar', nullable: true })
@@ -117,6 +122,9 @@ export class BloodUnit extends BaseEntity {
 
   @OneToMany(() => BloodStatusHistory, (history) => history.bloodUnit, { cascade: true })
   statusHistory: BloodStatusHistory[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, unknown> | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

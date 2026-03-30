@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'crypto';
+
 import {
   Controller,
   Get,
@@ -7,10 +9,22 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Logger,
+  BadRequestException,
+  UnauthorizedException,
+  ConflictException,
+  Req,
+  Query,
   Header,
 } from '@nestjs/common';
 
+import { ConfigService } from '@nestjs/config';
+import { Request } from 'express';
+
+import { BlockchainCallbackDto } from '../dto/blockchain-callback.dto';
 import { AdminGuard } from '../guards/admin.guard';
+import { BlockchainHealthService } from '../services/blockchain-health.service';
+import { FailedSorobanTxService } from '../services/failed-soroban-tx.service';
 import { QueueMetricsService } from '../services/queue-metrics.service';
 import { SorobanService } from '../services/soroban.service';
 
@@ -22,9 +36,14 @@ import type {
 
 @Controller('blockchain')
 export class BlockchainController {
+  private readonly logger = new Logger(BlockchainController.name);
+
   constructor(
     private sorobanService: SorobanService,
+    private configService: ConfigService,
     private queueMetricsService: QueueMetricsService,
+    private failedTxService: FailedSorobanTxService,
+    private blockchainHealthService: BlockchainHealthService,
   ) {}
 
   /**
@@ -44,6 +63,109 @@ export class BlockchainController {
   ): Promise<{ jobId: string }> {
     const jobId = await this.sorobanService.submitTransaction(job);
     return { jobId };
+  }
+
+  private canonicalizePayload(payload: Record<string, unknown>): string {
+    const sorted = Object.keys(payload)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        const value = payload[key];
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          acc[key] = this.canonicalizePayload(value as Record<string, unknown>);
+        } else {
+          acc[key] = value;
+        }
+        return acc;
+      }, {});
+
+    return JSON.stringify(sorted);
+  }
+
+  private verifyWebhookSignature(
+    payload: Record<string, unknown>,
+    providedSignature?: string,
+  ): void {
+    if (!providedSignature) {
+      this.logger.warn('Missing webhook signature header');
+      throw new UnauthorizedException('Missing signature');
+    }
+
+    const secret = this.configService.get<string>('BLOCKCHAIN_CALLBACK_SECRET');
+    if (!secret) {
+      this.logger.error('BLOCKCHAIN_CALLBACK_SECRET is not configured');
+      throw new BadRequestException('Server misconfiguration');
+    }
+
+    const canonicalized = this.canonicalizePayload(payload);
+    const expectedSignature = createHmac('sha256', secret)
+      .update(canonicalized)
+      .digest('hex');
+
+    const providedBuffer = Buffer.from(providedSignature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+
+    if (
+      providedBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(providedBuffer, expectedBuffer)
+    ) {
+      this.logger.warn('Blockchain callback signature verification failed', {
+        eventId: payload.eventId,
+        ip: 'unknown',
+        endpoint: '/blockchain/webhook/callback',
+      });
+      throw new UnauthorizedException('Invalid signature');
+    }
+  }
+
+  @Post('webhook/callback')
+  @HttpCode(HttpStatus.OK)
+  async processCallback(
+    @Body() callback: BlockchainCallbackDto,
+    @Req() request: Request,
+  ): Promise<{ success: boolean }> {
+    this.verifyWebhookSignature(
+      callback,
+      request.headers['x-webhook-signature'] as string,
+    );
+
+    const eventTime = Date.parse(callback.timestamp);
+    if (isNaN(eventTime)) {
+      throw new BadRequestException('Invalid timestamp');
+    }
+
+    const ageMs = Math.abs(Date.now() - eventTime);
+    const maxAgeMs = 5 * 60 * 1000;
+
+    if (ageMs > maxAgeMs) {
+      this.logger.warn('Blockchain callback rejected due to stale timestamp', {
+        eventId: callback.eventId,
+        timestamp: callback.timestamp,
+        ageMs,
+      });
+      throw new BadRequestException('Callback is stale');
+    }
+
+    const replayAllowed =
+      await this.sorobanService.checkAndSetCallbackIdempotency(
+        callback.eventId,
+      );
+
+    if (!replayAllowed) {
+      this.logger.warn('Blockchain callback replay detected', {
+        eventId: callback.eventId,
+      });
+      throw new ConflictException('Replay callback detected');
+    }
+
+    await this.sorobanService.processWebhookCallback(callback);
+
+    this.logger.log('Blockchain callback processed successfully', {
+      eventId: callback.eventId,
+      transactionHash: callback.transactionHash,
+      status: callback.status,
+    });
+
+    return { success: true };
   }
 
   /**
@@ -168,5 +290,77 @@ export class BlockchainController {
       `soroban_queue_dlq_depth ${m.live.dlqDepth}`,
     ];
     return lines.join('\n');
+  }
+
+  /**
+   * Manually replay failed outbox events (ADMIN only).
+   *
+   * Finds all FailedSorobanTxEntity rows with status=FAILED, clears their
+   * idempotency keys, and resubmits them to the main queue.
+   *
+   * POST /blockchain/admin/retry-failed
+   *
+   * @returns Replay summary with counts and per-job errors
+   * @throws 403 if not authenticated as admin
+   */
+  @Post('admin/retry-failed')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  async retryFailedOutboxEvents(): Promise<{
+    replayed: number;
+    skipped: number;
+    errors: Array<{ id: string; jobId: string; reason: string }>;
+  }> {
+    const failed = await this.failedTxService.findUnresolved();
+
+    let replayed = 0;
+    let skipped = 0;
+    const errors: Array<{ id: string; jobId: string; reason: string }> = [];
+
+    for (const record of failed) {
+      try {
+        const job = record.payload as unknown as import('../types/soroban-tx.types').SorobanTxJob;
+
+        // Resubmit via DLQ replay (clears idempotency key internally)
+        await this.sorobanService.replayDlqJobs({ batchSize: 1 });
+
+        await this.failedTxService.markReplayed(record.id);
+        replayed++;
+
+        this.logger.log(
+          `[AdminRetry] Replayed outbox record id=${record.id} jobId=${record.jobId}`,
+        );
+      } catch (err) {
+        skipped++;
+        errors.push({
+          id: record.id,
+          jobId: record.jobId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        this.logger.error(
+          `[AdminRetry] Failed to replay record id=${record.id}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+
+    return { replayed, skipped, errors };
+  }
+
+  /**
+   * Health indicator for the blockchain integration (ADMIN only).
+   *
+   * Reports the count of unresolved failed Soroban transactions.
+   * status = 'ok'       → no unresolved failures
+   * status = 'degraded' → manual replay required
+   *
+   * GET /blockchain/admin/health
+   *
+   * @throws 403 if not authenticated as admin
+   */
+  @Get('admin/health')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  async getBlockchainHealth() {
+    return this.blockchainHealthService.check();
   }
 }

@@ -1,14 +1,17 @@
 import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
 
+import { assertSorobanTxJob } from '../../common/guards/on-chain-id.guard';
+import { normalizeContractMethod } from '../contracts/lifebank-contracts';
+import { JobDeduplicationPlugin } from '../plugins/job-deduplication.plugin';
 import {
   SorobanTxJob,
   SorobanTxResult,
   QueueMetrics,
 } from '../types/soroban-tx.types';
 
+import { ConfirmationService } from './confirmation.service';
 import { IdempotencyService } from './idempotency.service';
-import { QueueMetricsService } from './queue-metrics.service';
 
 import type { Queue } from 'bull';
 
@@ -23,7 +26,8 @@ export class SorobanService {
     @InjectQueue('soroban-tx-queue') private txQueue: Queue,
     @InjectQueue('soroban-dlq') private dlq: Queue,
     private idempotencyService: IdempotencyService,
-    private queueMetricsService: QueueMetricsService,
+    private deduplicationPlugin: JobDeduplicationPlugin,
+    private confirmationService: ConfirmationService,
   ) {}
 
   /**
@@ -35,22 +39,39 @@ export class SorobanService {
    * @throws Error if idempotency key already exists (duplicate submission)
    */
   async submitTransaction(job: SorobanTxJob): Promise<string> {
+    const normalizedJob = this.normalizeJob(job);
+    assertSorobanTxJob(normalizedJob);
+
     // Enforce idempotency: prevent duplicate submissions
     const isNew = await this.idempotencyService.checkAndSetIdempotencyKey(
-      job.idempotencyKey,
+      normalizedJob.idempotencyKey,
     );
 
     if (!isNew) {
       this.logger.warn(
-        `Duplicate submission detected for idempotency key: ${job.idempotencyKey}`,
+        `Duplicate submission detected for idempotency key: ${normalizedJob.idempotencyKey}`,
       );
       throw new Error('Duplicate submission - idempotency key already exists');
     }
 
-    const maxRetries = job.maxRetries ?? this.DEFAULT_MAX_RETRIES;
+    // Check for duplicate job within dedup window
+    const isDedupNew = await this.deduplicationPlugin.checkAndSetJobDedup(
+      normalizedJob.contractMethod,
+      normalizedJob.args,
+    );
+
+    if (!isDedupNew) {
+      this.logger.warn(
+        `Duplicate job suppressed (within dedup window): ${normalizedJob.contractMethod}`,
+        { idempotencyKey: normalizedJob.idempotencyKey },
+      );
+      throw new Error('Duplicate job - equivalent job enqueued recently');
+    }
+
+    const maxRetries = normalizedJob.maxRetries ?? this.DEFAULT_MAX_RETRIES;
 
     // Add job to queue with exponential backoff and jitter
-    const queueJob = await this.txQueue.add(job, {
+    const queueJob = await this.txQueue.add(normalizedJob, {
       attempts: maxRetries,
       backoff: {
         type: 'exponential',
@@ -58,13 +79,26 @@ export class SorobanService {
       },
       removeOnComplete: true,
       removeOnFail: false, // Keep failed jobs for audit trail
-      jobId: job.idempotencyKey,
+      jobId: normalizedJob.idempotencyKey,
     });
 
     this.logger.log(
-      `Transaction queued: ${queueJob.id} (${job.contractMethod}) with ${maxRetries} max retries`,
+      `Transaction queued: ${queueJob.id} (${normalizedJob.contractMethod}) with ${maxRetries} max retries`,
     );
     return String(queueJob.id);
+  }
+
+  /**
+   * Get organization verification status from Soroban
+   */
+  async getOrganizationVerificationStatus(
+    organizationId: string,
+  ): Promise<{ verified: boolean; verifiedAt?: number } | null> {
+    // This would call the Soroban contract's get_organization method
+    // For now, returning a stub that should be implemented with actual contract call
+    this.logger.debug(`Querying verification status for org: ${organizationId}`);
+    // TODO: Implement actual Soroban contract query
+    return null;
   }
 
   /**
@@ -103,6 +137,23 @@ export class SorobanService {
     return { transactionHash: result.transactionHash };
   }
 
+  private normalizeJob(job: SorobanTxJob): SorobanTxJob {
+    const normalizedMethod = normalizeContractMethod(job.contractMethod);
+
+    if (normalizedMethod === job.contractMethod) {
+      return job;
+    }
+
+    return {
+      ...job,
+      contractMethod: normalizedMethod,
+      metadata: {
+        ...(job.metadata || {}),
+        normalizedFromContractMethod: job.contractMethod,
+      },
+    };
+  }
+
   /**
    * Get real-time queue metrics for admin monitoring.
    *
@@ -135,16 +186,75 @@ export class SorobanService {
     }
 
     const state = await job.getState();
+    const data = job.data as { transactionHash?: string };
 
     return {
       jobId: String(job.id),
-      transactionHash: job.data.transactionHash,
+      transactionHash: data.transactionHash,
       status: state as 'pending' | 'completed' | 'failed' | 'dlq',
       error: job.failedReason,
       retryCount: job.attemptsMade,
       createdAt: new Date(job.timestamp),
       completedAt: job.finishedOn ? new Date(job.finishedOn) : undefined,
     };
+  }
+
+  /**
+   * Check and atomically set callback event idempotency key.
+   * Rejects replayed callback events.
+   *
+   * @param eventId - Unique callback event ID
+   */
+  async checkAndSetCallbackIdempotency(eventId: string): Promise<boolean> {
+    return this.idempotencyService.checkAndSetIdempotencyKey(
+      `callback:${eventId}`,
+    );
+  }
+
+  /**
+   * Process an incoming blockchain callback via webhook.
+   * Tracks confirmation depth and transitions to "final" only once
+   * the configured SOROBAN_CONFIRMATION_DEPTH threshold is reached.
+   *
+   * @param callback - Verified callback payload
+   */
+  async processWebhookCallback(callback: {
+    eventId: string;
+    transactionHash: string;
+    contractMethod: string;
+    status: 'pending' | 'confirmed' | 'failed';
+    timestamp: string;
+    details?: string;
+    confirmations?: number;
+  }): Promise<void> {
+    this.logger.log(
+      `Processing blockchain callback event ${callback.eventId}`,
+      {
+        transactionHash: callback.transactionHash,
+        contractMethod: callback.contractMethod,
+        status: callback.status,
+        timestamp: callback.timestamp,
+      },
+    );
+
+    if (callback.status === 'confirmed') {
+      const state = await this.confirmationService.recordConfirmations(
+        callback.transactionHash,
+        callback.confirmations ?? 1,
+      );
+
+      this.logger.log(
+        `Finality check: tx=${callback.transactionHash} confirmations=${state.confirmations}/${state.finalityThreshold} status=${state.status}`,
+        { eventId: callback.eventId },
+      );
+
+      // TODO: persist state.status ('confirmed' | 'final') to database /
+      //       publish domain event so downstream workflows can react.
+    }
+
+    // TODO: handle 'pending' and 'failed' status transitions.
+
+    await Promise.resolve();
   }
 
   /**
@@ -162,5 +272,105 @@ export class SorobanService {
     const jitter = Math.random() * 0.1 * exponentialDelay;
     const delay = Math.min(exponentialDelay + jitter, this.MAX_DELAY);
     return Math.floor(delay);
+  }
+
+  /**
+   * Replay failed jobs from DLQ with safety guardrails.
+   * Admin-only operation with batch limits and dry-run support.
+   *
+   * @param options - Replay options (dryRun, batchSize, offset)
+   * @returns Replay result with metrics
+   */
+  async replayDlqJobs(options: {
+    dryRun?: boolean;
+    batchSize?: number;
+    offset?: number;
+  }): Promise<{
+    dryRun: boolean;
+    totalInspected: number;
+    replayable: number;
+    replayed: number;
+    skipped: number;
+    errors: Array<{ jobId: string; reason: string }>;
+  }> {
+    const { dryRun = false, batchSize = 10, offset = 0 } = options;
+
+    this.logger.log(
+      `[DLQ Replay] Starting ${dryRun ? 'DRY RUN' : 'LIVE'} replay: batchSize=${batchSize}, offset=${offset}`,
+    );
+
+    // Fetch failed jobs from DLQ
+    const failedJobs = await this.dlq.getJobs(['failed'], offset, offset + batchSize - 1);
+
+    const result = {
+      dryRun,
+      totalInspected: failedJobs.length,
+      replayable: 0,
+      replayed: 0,
+      skipped: 0,
+      errors: [] as Array<{ jobId: string; reason: string }>,
+    };
+
+    for (const job of failedJobs) {
+      const jobId = String(job.id);
+
+      // Check if job is replayable (has valid data)
+      if (!job.data || !job.data.contractMethod || !job.data.idempotencyKey) {
+        result.skipped++;
+        result.errors.push({
+          jobId,
+          reason: 'Invalid job data - missing required fields',
+        });
+        continue;
+      }
+
+      result.replayable++;
+
+      if (dryRun) {
+        this.logger.log(
+          `[DLQ Replay DRY RUN] Would replay job=${jobId} method=${job.data.contractMethod}`,
+        );
+        continue;
+      }
+
+      try {
+        // Clear old idempotency key to allow resubmission
+        await this.idempotencyService.clearIdempotencyKey(
+          job.data.idempotencyKey,
+        );
+
+        // Resubmit to main queue
+        await this.submitTransaction({
+          ...job.data,
+          metadata: {
+            ...job.data.metadata,
+            replayedFrom: jobId,
+            replayedAt: new Date().toISOString(),
+          },
+        });
+
+        // Remove from DLQ after successful resubmission
+        await job.remove();
+
+        result.replayed++;
+        this.logger.log(
+          `[DLQ Replay] Successfully replayed job=${jobId} method=${job.data.contractMethod}`,
+        );
+      } catch (error) {
+        result.errors.push({
+          jobId,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
+        this.logger.error(
+          `[DLQ Replay] Failed to replay job=${jobId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `[DLQ Replay] Complete: inspected=${result.totalInspected}, replayable=${result.replayable}, replayed=${result.replayed}, skipped=${result.skipped}, errors=${result.errors.length}`,
+    );
+
+    return result;
   }
 }

@@ -4,9 +4,9 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
 } from 'typeorm';
 
 import { UserEntity } from '../../users/entities/user.entity';
@@ -19,12 +19,16 @@ import { VerificationStatus } from '../enums/verification-status.enum';
 @Index('IDX_ORGANIZATIONS_VERIFICATION_STATUS', ['verificationStatus'])
 @Index('IDX_ORGANIZATIONS_LOCATION', ['latitude', 'longitude'])
 @Index('IDX_ORGANIZATIONS_CITY_COUNTRY', ['city', 'country'])
+@Index('IDX_ORGANIZATIONS_DELETED_AT', ['deletedAt'])
 export class OrganizationEntity extends BaseEntity {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ type: 'varchar', length: 255 })
-  name: string;
+  name!: string;
+
+  @Column({ name: 'legal_name', type: 'varchar', length: 200, nullable: true })
+  legalName?: string | null;
 
   @Column({ name: 'legal_name', type: 'varchar', length: 255, nullable: true })
   legalName?: string | null;
@@ -63,10 +67,27 @@ export class OrganizationEntity extends BaseEntity {
   })
   status?: OrganizationVerificationStatus | null;
 
-  @Column({ name: 'registration_number', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    type: 'varchar',
+    length: 40,
+    default: OrganizationVerificationStatus.PENDING_VERIFICATION,
+  })
+  status!: OrganizationVerificationStatus;
+
+  @Column({
+    name: 'registration_number',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   registrationNumber?: string | null;
 
-  @Column({ name: 'license_number', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'license_number',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   licenseNumber?: string | null;
 
   @Column({ name: 'license_document_path', type: 'varchar', length: 512, nullable: true })
@@ -84,6 +105,9 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ name: 'verified_by_user_id', type: 'uuid', nullable: true })
   verifiedByUserId?: string | null;
 
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  phone?: string | null;
+
   @Column({ name: 'phone_number', type: 'varchar', length: 40, nullable: true })
   phoneNumber?: string | null;
 
@@ -96,7 +120,20 @@ export class OrganizationEntity extends BaseEntity {
   @Column({ name: 'address_line_1', type: 'varchar', length: 255, nullable: true })
   addressLine1?: string | null;
 
-  @Column({ name: 'address_line_2', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'address_line_1',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  addressLine1?: string | null;
+
+  @Column({
+    name: 'address_line_2',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   addressLine2?: string | null;
 
   @Column({ type: 'varchar', length: 120, nullable: true })
@@ -142,8 +179,8 @@ export class OrganizationEntity extends BaseEntity {
   users: UserEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn({ name: 'updated_at' })
-  updatedAt: Date;
+  updatedAt!: Date;
 }
