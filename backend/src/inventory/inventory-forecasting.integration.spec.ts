@@ -88,6 +88,11 @@ describe('InventoryForecasting Integration (SQLite)', () => {
   let orderRepo: Repository<TestOrderEntity>;
   let inventoryRepo: Repository<InventoryEntity>;
 
+  const configValues: Record<string, number> = {
+    INVENTORY_FORECAST_THRESHOLD_DAYS: 3,
+    INVENTORY_FORECAST_HISTORY_DAYS: 30,
+  };
+
   const mockConfigService = {
     get: jest.fn((key: string, defaultValue?: number) => {
       const config: Record<string, number> = {

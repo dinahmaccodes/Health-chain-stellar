@@ -33,7 +33,7 @@ import { BloodRequestJobData } from './processors/blood-request.processor';
 import { BloodRequestChainService } from './services/blood-request-chain.service';
 import { BloodRequestEmailService } from './services/blood-request-email.service';
 
-type RequestUser = { id: string; role: string; email: string };
+type RequestUser = { id: string; role: UserRole; email: string };
 
 @Injectable()
 export class BloodRequestsService {
@@ -41,7 +41,9 @@ export class BloodRequestsService {
     @InjectRepository(BloodRequestEntity)
     private readonly bloodRequestRepo: Repository<BloodRequestEntity>,
     @InjectRepository(BloodRequestItemEntity)
-    private readonly itemRepo: Repository<BloodRequestItemEntity>,
+    private readonly bloodRequestItemRepo: Repository<BloodRequestItemEntity>,
+    @InjectRepository(RequestStatusHistoryEntity)
+    private readonly requestStatusHistoryRepo: Repository<RequestStatusHistoryEntity>,
     private readonly inventoryService: InventoryService,
     private readonly chainService: BloodRequestChainService,
     private readonly emailService: BloodRequestEmailService,
@@ -51,12 +53,84 @@ export class BloodRequestsService {
     private readonly queue: Queue<BloodRequestJobData>,
   ) {}
 
+  private assertHospitalAuthorization(
+    user: RequestUser,
+    hospitalId: string,
+  ): void {
+    if (user.role === UserRole.HOSPITAL) {
+      this.permissionsService.assertIsAdminOrSelf(
+        user,
+        hospitalId,
+        'Hospital accounts may only create blood requests where hospitalId matches their user id.',
+      );
+    }
+  }
+
+  private assertRequiredByFuture(requiredByIso: string): Date {
+    const requiredBy = new Date(requiredByIso);
+    if (Number.isNaN(requiredBy.getTime())) {
+      throw new BadRequestException(
+        'requiredBy must be a valid ISO 8601 date-time',
+      );
+    }
+    if (requiredBy.getTime() <= Date.now()) {
+      throw new BadRequestException('requiredBy must be in the future');
+    }
+    return requiredBy;
+  }
+
+  private async allocateRequestNumber(): Promise<string> {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const suffix = randomBytes(3).toString('hex').toUpperCase();
+      const requestNumber = `BR-${Date.now()}-${suffix}`;
+      const exists = await this.bloodRequestRepo.exist({
+        where: { requestNumber },
+      });
+      if (!exists) {
+        return requestNumber;
+      }
+    }
+    throw new Error('Unable to allocate a unique request number');
+  }
+
+  private async releaseReservations(
+    reserved: Array<{
+      bloodBankId: string;
+      bloodType: string;
+      quantity: number;
+    }>,
+  ): Promise<void> {
+    for (const r of reserved.reverse()) {
+      await this.inventoryService.releaseStockByBankAndType(
+        r.bloodBankId,
+        r.bloodType,
+        r.quantity,
+      );
+    }
+  }
+
+  private calculateSlaResponseDueAt(urgencyLevel: UrgencyLevel): Date {
+    const now = new Date();
+    const urgencyToHours: Record<UrgencyLevel, number> = {
+      [UrgencyLevel.CRITICAL]: 1,
+      [UrgencyLevel.URGENT]: 4,
+      [UrgencyLevel.ROUTINE]: 24,
+      [UrgencyLevel.SCHEDULED]: 72,
+    };
+    const deadline = new Date(now);
+    deadline.setHours(deadline.getHours() + urgencyToHours[urgencyLevel]);
+    return deadline;
+  }
+
   async create(
     dto: CreateBloodRequestDto,
     user: RequestUser,
   ): Promise<{ message: string; data: BloodRequestEntity }> {
-    this.assertHospitalAuth(user, dto.hospitalId);
-    const requiredBy = this.parseRequiredBy(dto.requiredBy);
+    this.assertHospitalAuthorization(user, dto.hospitalId);
+    const requiredBy = this.assertRequiredByFuture(dto.requiredBy);
+    const urgencyLevel = dto.urgencyLevel ?? UrgencyLevel.ROUTINE;
+    const slaResponseDueAt = this.calculateSlaResponseDueAt(urgencyLevel);
+
     const requestNumber = await this.allocateRequestNumber();
 
     const reserved: Array<{ bloodBankId: string; bloodType: string; quantity: number }> = [];
@@ -130,7 +204,7 @@ export class BloodRequestsService {
 
         const adminAlertHandler = {
           action: CompensationAction.NOTIFY_ADMIN,
-          execute: async () => {
+          execute: () => {
             this.logger.error(`[ADMIN ALERT] Blood request on-chain failure`, {
               requestNumber,
               hospitalId: dto.hospitalId,
@@ -141,7 +215,7 @@ export class BloodRequestsService {
 
         const flagHandler = {
           action: CompensationAction.FLAG_FOR_REVIEW,
-          execute: async () => true,
+          execute: () => true,
         };
 
         const result = await this.compensationService.compensate(
@@ -161,8 +235,39 @@ export class BloodRequestsService {
         requestedUnits: totalRequestedUnits,
         availableUnits: totalAvailableUnits,
         requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
-        currentTimestamp: Math.floor(Date.now() / 1000),
-        emergencyOverride: false,
+        createdTimestamp: Math.floor(Date.now() / 1000),
+        urgency: dto.urgency || 'ROUTINE',
+        deliveryAddress: dto.deliveryAddress?.trim() ?? null,
+        deliveryContactName: dto.deliveryContactName?.trim() ?? null,
+        deliveryContactPhone: dto.deliveryContactPhone?.trim() ?? null,
+        deliveryInstructions: dto.deliveryInstructions?.trim() ?? null,
+        notes: dto.notes?.trim() ?? null,
+        status: RequestStatus.PENDING,
+        statusUpdatedAt: new Date(),
+        slaResponseDueAt,
+        slaFulfillmentDueAt: requiredBy,
+        blockchainRequestId: requestNumber,
+        blockchainNetwork: 'stellar',
+        blockchainTxHash: transactionHash,
+        blockchainConfirmedAt: new Date(),
+        createdByUserId: user.id,
+        items: dto.items.map((i) =>
+          this.bloodRequestItemRepo.create({
+            bloodType: i.bloodType.trim(),
+            component: i.component,
+            quantityMl: i.quantityMl || i.quantity,
+            priority: i.priority || 'NORMAL',
+            compatibilityNotes: i.compatibilityNotes,
+          }),
+        ),
+        statusHistory: [
+          this.requestStatusHistoryRepo.create({
+            previousStatus: null,
+            newStatus: RequestStatus.PENDING,
+            reason: 'Request created',
+            changedByUserId: user.id,
+          }),
+        ],
       });
 
       const parent = this.bloodRequestRepo.create({

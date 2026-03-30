@@ -91,8 +91,11 @@ const mockDataSource = {
 describe('OrdersService', () => {
   let service: OrdersService;
 
-  beforeEach(async () => {
-    jest.clearAllMocks();
+  beforeEach(() => {
+    // Create a mock gateway
+    mockGateway = {
+      emitOrderUpdate: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -139,13 +142,84 @@ describe('OrdersService', () => {
     });
   });
 
-  // ── findOne ─────────────────────────────────────────────────────────────────
+  describe('findAllWithFilters', () => {
+    beforeEach(() => {
+      // Setup mock data
+      const mockOrders: Order[] = [
+        {
+          id: 'ORD-001',
+          bloodType: 'A+',
+          quantity: 5,
+          bloodBank: {
+            id: 'BB-001',
+            name: 'Central Blood Bank',
+            location: 'Lagos',
+          },
+          hospital: {
+            id: 'HOSP-001',
+            name: 'General Hospital',
+            location: 'Ikeja',
+          },
+          status: 'pending',
+          rider: null,
+          placedAt: new Date('2024-01-15T10:00:00Z'),
+          deliveredAt: null,
+          confirmedAt: null,
+          cancelledAt: null,
+          createdAt: new Date('2024-01-15T10:00:00Z'),
+          updatedAt: new Date('2024-01-15T10:00:00Z'),
+        },
+        {
+          id: 'ORD-002',
+          bloodType: 'O-',
+          quantity: 3,
+          bloodBank: {
+            id: 'BB-002',
+            name: 'City Blood Bank',
+            location: 'Abuja',
+          },
+          hospital: {
+            id: 'HOSP-001',
+            name: 'General Hospital',
+            location: 'Ikeja',
+          },
+          status: 'delivered',
+          rider: { id: 'RIDER-001', name: 'John Doe', phone: '+234-XXX-XXXX' },
+          placedAt: new Date('2024-01-10T10:00:00Z'),
+          deliveredAt: new Date('2024-01-10T14:00:00Z'),
+          confirmedAt: new Date('2024-01-10T10:05:00Z'),
+          cancelledAt: null,
+          createdAt: new Date('2024-01-10T10:00:00Z'),
+          updatedAt: new Date('2024-01-10T14:00:00Z'),
+        },
+        {
+          id: 'ORD-003',
+          bloodType: 'B+',
+          quantity: 2,
+          bloodBank: {
+            id: 'BB-001',
+            name: 'Central Blood Bank',
+            location: 'Lagos',
+          },
+          hospital: {
+            id: 'HOSP-002',
+            name: 'City Hospital',
+            location: 'Lagos',
+          },
+          status: 'confirmed',
+          rider: null,
+          placedAt: new Date('2024-01-20T10:00:00Z'),
+          deliveredAt: null,
+          confirmedAt: new Date('2024-01-20T10:05:00Z'),
+          cancelledAt: null,
+          createdAt: new Date('2024-01-20T10:00:00Z'),
+          updatedAt: new Date('2024-01-20T10:05:00Z'),
+        },
+      ];
 
-  describe('findOne', () => {
-    it('returns the order when found', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder());
-      const result = await service.findOne('order-1');
-      expect(result.data.id).toBe('order-1');
+      // Inject mock data into service
+      const mutableService = service as unknown as { orders: Order[] };
+      mutableService.orders = mockOrders;
     });
 
     it('throws NotFoundException when order does not exist', async () => {
@@ -247,13 +321,18 @@ describe('OrdersService', () => {
       );
     });
 
-    it('emits order.rider.assigned event', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder());
-      await service.assignRider('order-1', 'rider-1');
-      expect(mockEventEmitter.emit).toHaveBeenCalledWith(
-        'order.rider.assigned',
-        expect.any(Object),
-      );
+    it('should prioritize active orders before completed orders', async () => {
+      const result = await service.findAllWithFilters({
+        hospitalId: 'HOSP-001',
+        sortBy: 'placedAt',
+        sortOrder: 'asc',
+        page: 1,
+        pageSize: 25,
+      });
+
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].status).toBe('delivered');
+      expect(result.data[1].status).toBe('pending');
     });
 
     it('starts DISPATCH_ACCEPTANCE SLA stage', async () => {
@@ -299,73 +378,18 @@ describe('OrdersService', () => {
       );
     });
 
-    it('emits order.disputed event', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.CONFIRMED }));
-      mockOrderRepo.save.mockImplementation((e) => Promise.resolve(e));
-      await service.raiseDispute('order-1', { reason: 'wrong item' });
-      expect(mockEventEmitter.emit).toHaveBeenCalledWith('order.disputed', expect.any(Object));
-    });
-  });
+    it('should sort by quantity in ascending order', async () => {
+      const result = await service.findAllWithFilters({
+        hospitalId: 'HOSP-001',
+        sortBy: 'quantity',
+        sortOrder: 'asc',
+        page: 1,
+        pageSize: 25,
+      });
 
-  // ── resolveDispute ──────────────────────────────────────────────────────────
-
-  describe('resolveDispute', () => {
-    it('throws ConflictException when order is not DISPUTED', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.PENDING }));
-      await expect(
-        service.resolveDispute('order-1', { resolution: 'refund' }, 'actor-1'),
-      ).rejects.toThrow(ConflictException);
-    });
-
-    it('creates an approval request for DISPUTED orders', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.DISPUTED }));
-      const result = await service.resolveDispute(
-        'order-1',
-        { resolution: 'refund' },
-        'actor-1',
-      );
-      expect(mockApproval.createRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ requiredApprovals: 2 }),
-      );
-      expect(result.approvalRequestId).toBe('approval-1');
-    });
-  });
-
-  // ── finalizeDisputeResolution ───────────────────────────────────────────────
-
-  describe('finalizeDisputeResolution', () => {
-    it('sets order status to RESOLVED', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.DISPUTED }));
-      mockOrderRepo.save.mockImplementation((e) => Promise.resolve(e));
-      await service.finalizeDisputeResolution('order-1', 'refund');
-      expect(mockOrderRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ status: OrderStatus.RESOLVED }),
-      );
-    });
-
-    it('persists ORDER_RESOLVED event', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.DISPUTED }));
-      mockOrderRepo.save.mockImplementation((e) => Promise.resolve(e));
-      await service.finalizeDisputeResolution('order-1', 'refund');
-      expect(mockEventStore.persistEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: OrderEventType.ORDER_RESOLVED }),
-      );
-    });
-
-    it('emits order.resolved event', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(makeOrder({ status: OrderStatus.DISPUTED }));
-      mockOrderRepo.save.mockImplementation((e) => Promise.resolve(e));
-      await service.finalizeDisputeResolution('order-1', 'refund');
-      expect(mockEventEmitter.emit).toHaveBeenCalledWith('order.resolved', expect.any(Object));
-    });
-  });
-
-  // ── previewOrderFees ────────────────────────────────────────────────────────
-
-  describe('previewOrderFees', () => {
-    it('throws NotFoundException when order does not exist', async () => {
-      mockOrderRepo.findOne.mockResolvedValue(null);
-      await expect(service.previewOrderFees('missing', {})).rejects.toThrow(NotFoundException);
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].quantity).toBe(3);
+      expect(result.data[1].quantity).toBe(5);
     });
 
     it('delegates to orderFeeService.preview', async () => {

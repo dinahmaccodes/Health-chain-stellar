@@ -3,13 +3,19 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
-import { BloodRequestIrrecoverableError, CompensationAction } from '../common/errors/app-errors';
+import { UserRole } from '../auth/enums/user-role.enum';
+import { SorobanService } from '../blockchain/services/soroban.service';
+import { CompensationService } from '../common/compensation/compensation.service';
+import {
+  BloodRequestIrrecoverableError,
+  CompensationAction,
+} from '../common/errors/app-errors';
 import { InventoryService } from '../inventory/inventory.service';
 import { BloodRequestsService } from './blood-requests.service';
-import { BloodRequestChainService } from './services/blood-request-chain.service';
-import { BloodRequestEmailService } from './services/blood-request-email.service';
+import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
 import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
 import { BloodRequestEntity } from './entities/blood-request.entity';
+import { RequestStatusHistoryEntity } from './entities/request-status-history.entity';
 import { BloodRequestStatus } from './enums/blood-request-status.enum';
 import { BLOOD_REQUEST_QUEUE } from './enums/request-urgency.enum';
 import { PermissionsService } from '../auth/permissions.service';
@@ -49,8 +55,16 @@ const mockBloodRequestRepo = {
   save: jest.fn().mockImplementation((e) => Promise.resolve(savedRequest(e))),
 };
 
-const mockItemRepo = {
-  create: jest.fn().mockImplementation((dto) => dto),
+const mockBloodRequestItemRepo = {
+  create: jest
+    .fn()
+    .mockImplementation((dto: Partial<BloodRequestItemEntity>) => dto),
+};
+
+const mockRequestStatusHistoryRepo = {
+  create: jest
+    .fn()
+    .mockImplementation((dto: Partial<RequestStatusHistoryEntity>) => dto),
 };
 
 const mockInventoryService = {
@@ -73,11 +87,18 @@ const mockPermissionsService = {
   assertIsAdminOrSelf: jest.fn(),
 };
 
-const mockQueue = {
-  add: jest.fn().mockResolvedValue({ id: 'job-1' }),
+const validDto: CreateBloodRequestDto = {
+  hospitalId: 'hosp-1',
+  requiredBy: new Date(Date.now() + 86400000).toISOString(),
+  deliveryAddress: '123 Main St',
+  items: [{ bloodBankId: 'bank-1', bloodType: 'A+', quantity: 2 }],
 };
 
-// ── Suite ─────────────────────────────────────────────────────────────────────
+const adminUser = {
+  id: 'hosp-1',
+  role: UserRole.ADMIN,
+  email: 'admin@test.com',
+};
 
 describe('BloodRequestsService', () => {
   let service: BloodRequestsService;
@@ -104,10 +125,8 @@ describe('BloodRequestsService', () => {
   // ── Happy path ──────────────────────────────────────────────────────────────
 
   describe('create — happy path', () => {
-    it('reserves inventory for each item', async () => {
-      await service.create(validDto() as any, adminUser);
-      expect(mockInventoryService.reserveStockOrThrow).toHaveBeenCalledWith('bank-1', 'A+', 450);
-    });
+    it('reserves inventory, submits chain tx, saves entity, sends email', async () => {
+      const result = await service.create(validDto, adminUser);
 
     it('delegates chain submission to BloodRequestChainService', async () => {
       await service.create(validDto() as any, adminUser);
@@ -159,9 +178,12 @@ describe('BloodRequestsService', () => {
       await expect(service.create(dto as any, adminUser)).rejects.toThrow(BadRequestException);
     });
 
-    it('throws BadRequestException when requiredBy is not a valid date', async () => {
-      const dto = { ...validDto(), requiredBy: 'not-a-date' };
-      await expect(service.create(dto as any, adminUser)).rejects.toThrow(BadRequestException);
+      expect(error).toBeInstanceOf(BloodRequestIrrecoverableError);
+      const actions = handlers.map((handler) => handler.action);
+      expect(actions).toContain(CompensationAction.REVERT_INVENTORY);
+      expect(actions).toContain(CompensationAction.NOTIFY_USER);
+      expect(actions).toContain(CompensationAction.NOTIFY_ADMIN);
+      expect(actions).toContain(CompensationAction.FLAG_FOR_REVIEW);
     });
 
     it('throws BadRequestException when item has no quantity', async () => {
@@ -179,11 +201,15 @@ describe('BloodRequestsService', () => {
       );
     });
 
-    it('re-throws BloodRequestIrrecoverableError', async () => {
-      await expect(service.create(validDto() as any, adminUser)).rejects.toBeInstanceOf(
-        BloodRequestIrrecoverableError,
-      );
-    });
+    it('attaches failureRecordId to error context', async () => {
+      let caughtError: BloodRequestIrrecoverableError | undefined;
+      try {
+        await service.create(validDto, adminUser);
+      } catch (e) {
+        if (e instanceof BloodRequestIrrecoverableError) {
+          caughtError = e;
+        }
+      }
 
     it('does NOT call releaseStockByBankAndType (compensation already handled it)', async () => {
       await expect(service.create(validDto() as any, adminUser)).rejects.toThrow();

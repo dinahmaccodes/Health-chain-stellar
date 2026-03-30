@@ -1,9 +1,9 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
-  CreateDateColumn,
-  UpdateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   Index,
 } from 'typeorm';
@@ -88,10 +88,58 @@ export class BloodRequestEntity {
 
   @Column({
     type: 'varchar',
-    length: 24,
-    default: BloodRequestStatus.PENDING,
+    length: 32,
+    default: RequestStatus.PENDING,
   })
-  status: BloodRequestStatus;
+  status: RequestStatus;
+
+  @Column({ name: 'matched_at', type: 'timestamptz', nullable: true })
+  matchedAt: Date | null;
+
+  @Column({ name: 'approved_at', type: 'timestamptz', nullable: true })
+  approvedAt: Date | null;
+
+  @Column({ name: 'fulfilled_at', type: 'timestamptz', nullable: true })
+  fulfilledAt: Date | null;
+
+  @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
+  cancelledAt: Date | null;
+
+  @Column({ name: 'rejected_at', type: 'timestamptz', nullable: true })
+  rejectedAt: Date | null;
+
+  @Column({
+    name: 'status_updated_at',
+    type: 'timestamptz',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
+  statusUpdatedAt: Date;
+
+  @Column({ name: 'sla_response_due_at', type: 'timestamptz', nullable: true })
+  slaResponseDueAt: Date | null;
+
+  @Column({
+    name: 'sla_fulfillment_due_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  slaFulfillmentDueAt: Date | null;
+
+  @Column({
+    name: 'blockchain_request_id',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  blockchainRequestId: string | null;
+
+  @Column({
+    name: 'blockchain_network',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  blockchainNetwork: string | null;
 
   @Column({ name: 'delivery_address', type: 'text', nullable: true })
   deliveryAddress: string | null;
@@ -106,6 +154,13 @@ export class BloodRequestEntity {
     nullable: true,
   })
   blockchainTxHash: string | null;
+
+  @Column({
+    name: 'blockchain_confirmed_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  blockchainConfirmedAt: Date | null;
 
   @Column({
     name: 'created_by_user_id',
