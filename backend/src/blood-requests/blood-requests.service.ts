@@ -17,9 +17,13 @@ import {
 import { InventoryService } from '../inventory/inventory.service';
 
 import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
-import { BloodRequestItemEntity } from './entities/blood-request-item.entity';
-import { BloodRequestEntity } from './entities/blood-request.entity';
+import {
+  BloodRequestItemEntity,
+  ItemPriority,
+} from './entities/blood-request-item.entity';
+import { BloodRequestEntity, RequestUrgency } from './entities/blood-request.entity';
 import { BloodRequestStatus } from './enums/blood-request-status.enum';
+import { TriageScoringService } from './services/triage-scoring.service';
 import {
   BLOOD_REQUEST_QUEUE,
   QUEUE_PRIORITY,
@@ -42,6 +46,7 @@ export class BloodRequestsService {
     private readonly chainService: BloodRequestChainService,
     private readonly emailService: BloodRequestEmailService,
     private readonly permissionsService: PermissionsService,
+    private readonly triageScoringService: TriageScoringService,
     @InjectQueue(BLOOD_REQUEST_QUEUE)
     private readonly queue: Queue<BloodRequestJobData>,
   ) {}
@@ -149,6 +154,16 @@ export class BloodRequestsService {
         irrecoverableErr.context['failureRecordId'] = result.failureRecordId;
         throw irrecoverableErr;
       }
+
+      const triage = this.triageScoringService.compute({
+        urgency: dto.urgency || RequestUrgency.ROUTINE,
+        itemPriority: highestPriority,
+        requestedUnits: totalRequestedUnits,
+        availableUnits: totalAvailableUnits,
+        requiredByTimestamp: Math.floor(requiredBy.getTime() / 1000),
+        currentTimestamp: Math.floor(Date.now() / 1000),
+        emergencyOverride: false,
+      });
 
       const parent = this.bloodRequestRepo.create({
         requestNumber,
