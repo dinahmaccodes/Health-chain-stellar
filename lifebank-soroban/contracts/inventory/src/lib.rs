@@ -551,6 +551,9 @@ impl InventoryContract {
     /// Can be called by anyone — the reservation record is the authority.
     /// If the reservation has already expired (ledger time > expiration_timestamp)
     /// the call still succeeds so callers can clean up stale reservations.
+    ///
+    /// Records a status history entry and emits a status-change event for every
+    /// unit that transitions Reserved → Available, preserving the full audit trail.
     pub fn release_reservation(env: Env, reservation_id: u64) -> Result<(), ContractError> {
         Self::require_not_paused(&env)?;
         let reservation = storage::get_reservation(&env, reservation_id)
@@ -567,6 +570,22 @@ impl InventoryContract {
                     storage::set_blood_unit(&env, &unit);
                     storage::remove_from_status_index(&env, unit_id, BloodStatus::Reserved);
                     storage::add_to_status_index(&env, &unit);
+                    storage::record_status_change(
+                        &env,
+                        unit_id,
+                        BloodStatus::Reserved,
+                        BloodStatus::Available,
+                        &reservation.requester,
+                        None,
+                    );
+                    events::emit_status_change(
+                        &env,
+                        unit_id,
+                        BloodStatus::Reserved,
+                        BloodStatus::Available,
+                        &reservation.requester,
+                        None,
+                    );
                 }
             }
         }
