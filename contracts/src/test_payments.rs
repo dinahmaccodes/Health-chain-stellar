@@ -7,7 +7,7 @@ use crate::payments::{
 };
 use crate::{
     HealthChainContract, HealthChainContractClient, ADMIN, DISPUTES, DISPUTE_METADATA,
-    MULTISIG_CONFIG, PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS,
+    ESCROW_ACCOUNTS, MULTISIG_CONFIG, PAYMENTS, PAYMENT_STATS, PENDING_APPROVALS,
 };
 
 use soroban_sdk::{
@@ -619,6 +619,21 @@ fn pending_approval_rejects_duplicate_votes() {
     );
 }
 
+fn satisfy_escrow_conditions(env: &Env, contract_id: &Address, payment_id: u64, approver: &Address) {
+    env.as_contract(contract_id, || {
+        let mut escrow_accounts: Map<u64, EscrowAccount> =
+            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
+        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        escrow.release_conditions = ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 0,
+            authorized_approver: Some(approver.clone()),
+        };
+        escrow_accounts.set(payment_id, escrow);
+        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+    });
+}
+
 #[test]
 fn low_value_release_keeps_single_admin_flow() {
     let env = Env::default();
@@ -642,6 +657,9 @@ fn low_value_release_keeps_single_admin_flow() {
         payments.set(payment_id, payment);
         env.storage().persistent().set(&PAYMENTS, &payments);
     });
+
+    // Satisfy escrow conditions before proposing release.
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &admin);
 
     assert!(client.propose_release(&payment_id, &admin));
 
@@ -710,6 +728,8 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
         env.storage().persistent().set(&PAYMENTS, &payments);
     });
 
+    // Satisfy escrow conditions for both signers before voting.
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_one);
     assert!(!client.propose_release(&payment_id, &signer_one));
 
     env.as_contract(&contract_id, || {
@@ -723,6 +743,8 @@ fn high_value_release_requires_threshold_votes_and_prevents_duplicates() {
     let duplicate_attempt = client.try_propose_release(&payment_id, &signer_one);
     assert!(duplicate_attempt.is_err());
 
+    // Update conditions to allow signer_two to also pass the approver check.
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &signer_two);
     assert!(client.propose_release(&payment_id, &signer_two));
 
     env.as_contract(&contract_id, || {
@@ -754,6 +776,173 @@ fn non_disputed_payments_are_ignored() {
     let _payment_id = client.create_payment(&1, &payer, &payee, &1_500, &asset);
     assert_eq!(client.process_expired_disputes(), 0);
     assert_eq!(client.get_payment_stats(), PaymentStats::new());
+}
+
+#[test]
+#[test]
+fn escrow_conditions_block_release_when_unmet() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+    });
+
+    // Default conditions: medical_records_verified=false — release must be blocked.
+    let result = client.try_propose_release(&payment_id, &admin);
+    assert!(result.is_err(), "release must fail when escrow conditions are unmet");
+}
+
+#[test]
+fn escrow_conditions_block_release_before_min_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+
+        // Set conditions: verified but min_timestamp in the future.
+        let mut escrow_accounts: Map<u64, EscrowAccount> =
+            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
+        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        escrow.release_conditions = ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 9_999_999,
+            authorized_approver: Some(admin.clone()),
+        };
+        escrow_accounts.set(payment_id, escrow);
+        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+    });
+
+    // Ledger timestamp is 0 < 9_999_999 — must be blocked.
+    let result = client.try_propose_release(&payment_id, &admin);
+    assert!(result.is_err(), "release must fail before min_timestamp");
+}
+
+#[test]
+fn escrow_conditions_block_release_wrong_approver() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let other = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+
+        // Conditions require `other` as approver, but admin will call.
+        let mut escrow_accounts: Map<u64, EscrowAccount> =
+            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
+        let mut escrow = escrow_accounts.get(payment_id).unwrap();
+        escrow.release_conditions = ReleaseConditions {
+            medical_records_verified: true,
+            min_timestamp: 0,
+            authorized_approver: Some(other.clone()),
+        };
+        escrow_accounts.set(payment_id, escrow);
+        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+    });
+
+    let result = client.try_propose_release(&payment_id, &admin);
+    assert!(result.is_err(), "release must fail when approver does not match");
+}
+
+#[test]
+fn escrow_conditions_allow_release_when_all_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &(HIGH_VALUE_THRESHOLD - 1), &asset);
+
+    env.as_contract(&contract_id, || {
+        let mut payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        let mut payment = payments.get(payment_id).unwrap();
+        payment.status = PaymentStatus::Escrowed;
+        payments.set(payment_id, payment);
+        env.storage().persistent().set(&PAYMENTS, &payments);
+    });
+
+    satisfy_escrow_conditions(&env, &contract_id, payment_id, &admin);
+
+    assert!(client.propose_release(&payment_id, &admin));
+
+    env.as_contract(&contract_id, || {
+        let payments: Map<u64, Payment> = env.storage().persistent().get(&PAYMENTS).unwrap();
+        assert_eq!(payments.get(payment_id).unwrap().status, PaymentStatus::Completed);
+    });
+}
+
+#[test]
+fn escrow_conditions_stored_at_payment_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(HealthChainContract, ());
+    let client = HealthChainContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let payee = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    client.initialize(&admin);
+    let payment_id = client.create_payment(&1, &payer, &payee, &500, &asset);
+
+    env.as_contract(&contract_id, || {
+        let escrow_accounts: Map<u64, EscrowAccount> =
+            env.storage().persistent().get(&ESCROW_ACCOUNTS).unwrap();
+        let escrow = escrow_accounts.get(payment_id).unwrap();
+        assert_eq!(escrow.payment_id, payment_id);
+        assert_eq!(escrow.locked_amount, 500);
+        assert!(!escrow.release_conditions.medical_records_verified);
+    });
 }
 
 #[test]

@@ -398,6 +398,7 @@ const DISPUTE_TIMEOUT_KEY: &str = "DSP_TO";
 const PAYMENT_STATS_KEY: &str = "PAY_STATS";
 const MULTISIG_CONFIG_KEY: &str = "MSIG_CFG";
 const PENDING_APPROVALS_KEY: &str = "PEND_APR";
+const ESCROW_ACCOUNTS_KEY: &str = "ESC_ACCS";
 
 const _: () = assert!(BLOOD_UNITS_KEY.len() <= 9);
 const _: () = assert!(NEXT_ID_KEY.len() <= 9);
@@ -419,6 +420,7 @@ const _: () = assert!(DISPUTE_TIMEOUT_KEY.len() <= 9);
 const _: () = assert!(PAYMENT_STATS_KEY.len() <= 9);
 const _: () = assert!(MULTISIG_CONFIG_KEY.len() <= 9);
 const _: () = assert!(PENDING_APPROVALS_KEY.len() <= 9);
+const _: () = assert!(ESCROW_ACCOUNTS_KEY.len() <= 9);
 
 /// Storage keys (single source of truth)
 pub(crate) const BLOOD_UNITS: Symbol = symbol_short!("UNITS");
@@ -441,6 +443,7 @@ pub(crate) const DISPUTE_TIMEOUT: Symbol = symbol_short!("DSP_TO");
 pub(crate) const PAYMENT_STATS: Symbol = symbol_short!("PAY_STATS");
 pub(crate) const MULTISIG_CONFIG: Symbol = symbol_short!("MSIG_CFG");
 pub(crate) const PENDING_APPROVALS: Symbol = symbol_short!("PEND_APR");
+pub(crate) const ESCROW_ACCOUNTS: Symbol = symbol_short!("ESC_ACCS");
 /// Storage key enumeration for composite keys
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1879,7 +1882,7 @@ impl HealthChainContract {
         Ok(request_id)
     }
 
-    /// Create a payment for a request
+    /// Create a payment for a request and persist its escrow account with release conditions.
     pub fn create_payment(
         env: Env,
         request_id: u64,
@@ -1924,6 +1927,25 @@ impl HealthChainContract {
             return Err(Error::StorageError);
         }
 
+        // Persist escrow account with default release conditions at payment setup time.
+        // Callers may update conditions via set_escrow_conditions before release.
+        let escrow = EscrowAccount {
+            payment_id,
+            locked_amount: amount,
+            release_conditions: ReleaseConditions {
+                medical_records_verified: false,
+                min_timestamp: 0,
+                authorized_approver: None,
+            },
+        };
+        let mut escrow_accounts: Map<u64, EscrowAccount> = env
+            .storage()
+            .persistent()
+            .get(&ESCROW_ACCOUNTS)
+            .unwrap_or(Map::new(&env));
+        escrow_accounts.set(payment_id, escrow);
+        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+
         payments.set(payment_id, payment);
         env.storage().persistent().set(&PAYMENTS, &payments);
         env.storage()
@@ -1931,6 +1953,38 @@ impl HealthChainContract {
             .set(&NEXT_PAYMENT_ID, &(payment_id + 1));
 
         Ok(payment_id)
+    }
+
+    /// Update the release conditions for an escrowed payment (admin only).
+    pub fn set_escrow_conditions(
+        env: Env,
+        payment_id: u64,
+        medical_records_verified: bool,
+        min_timestamp: u64,
+        authorized_approver: Option<Address>,
+    ) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        let mut escrow_accounts: Map<u64, EscrowAccount> = env
+            .storage()
+            .persistent()
+            .get(&ESCROW_ACCOUNTS)
+            .ok_or(Error::PaymentNotFound)?;
+
+        let mut escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        escrow.release_conditions = ReleaseConditions {
+            medical_records_verified,
+            min_timestamp,
+            authorized_approver,
+        };
+        escrow_accounts.set(payment_id, escrow);
+        env.storage().persistent().set(&ESCROW_ACCOUNTS, &escrow_accounts);
+        Ok(())
     }
 
     /// Configure the dispute timeout window in seconds (admin only).
@@ -1986,8 +2040,12 @@ impl HealthChainContract {
             .unwrap_or(PaymentStats::new())
     }
 
-    /// Propose an escrow release. Low-value payments keep single-admin flow.
-    /// High-value payments require threshold approvals from configured signers.
+    /// Propose an escrow release.
+    ///
+    /// Escrow conditions (medical records, min timestamp, optional approver) are
+    /// evaluated first for every payment.  Multisig approval is additive — it is
+    /// required on top of the escrow conditions for high-value payments, not
+    /// instead of them.
     pub fn propose_release(env: Env, payment_id: u64, approver: Address) -> Result<bool, Error> {
         approver.require_auth();
 
@@ -2000,6 +2058,18 @@ impl HealthChainContract {
         let mut payment = payments.get(payment_id).ok_or(Error::PaymentNotFound)?;
         if !payment.can_transition_to(PaymentStatus::Completed) {
             return Err(Error::InvalidPaymentStatus);
+        }
+
+        // Enforce escrow release conditions before any payout path.
+        let escrow_accounts: Map<u64, EscrowAccount> = env
+            .storage()
+            .persistent()
+            .get(&ESCROW_ACCOUNTS)
+            .unwrap_or(Map::new(&env));
+        let escrow = escrow_accounts.get(payment_id).ok_or(Error::PaymentNotFound)?;
+        let current_timestamp = env.ledger().timestamp();
+        if !escrow.can_release(current_timestamp, Some(&approver)) {
+            return Err(Error::EscrowNotReleasable);
         }
 
         let mut pending_approvals: Map<u64, PendingApproval> = env
@@ -2019,7 +2089,7 @@ impl HealthChainContract {
             }
 
             payment.status = PaymentStatus::Completed;
-            payment.escrow_released_at = Some(env.ledger().timestamp());
+            payment.escrow_released_at = Some(current_timestamp);
             payments.set(payment_id, payment);
             env.storage().persistent().set(&PAYMENTS, &payments);
             pending_approvals.remove(payment_id);
@@ -2053,7 +2123,7 @@ impl HealthChainContract {
         if approval.has_reached_threshold(config.threshold) {
             approval.executed = true;
             payment.status = PaymentStatus::Completed;
-            payment.escrow_released_at = Some(env.ledger().timestamp());
+            payment.escrow_released_at = Some(current_timestamp);
             payments.set(payment_id, payment);
             env.storage().persistent().set(&PAYMENTS, &payments);
         }
