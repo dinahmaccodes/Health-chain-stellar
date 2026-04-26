@@ -27,6 +27,7 @@ import { MfaService } from './mfa/mfa.service';
 import { PasswordResetService } from './password-reset.service';
 import { PermissionsService } from './permissions.service';
 import { AuthSessionRepository } from './repositories/auth-session.repository';
+import { ScopeResolutionService } from './scope-resolution.service';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
     PermissionsGuard,
     PermissionsService,
     AuthSessionRepository,
+    ScopeResolutionService,
   ],
   exports: [
     AuthService,
@@ -76,6 +78,7 @@ import { AuthSessionRepository } from './repositories/auth-session.repository';
     JwtAuthGuard,
     PermissionsGuard,
     PermissionsService,
+    ScopeResolutionService,
     JwtModule,
     AuthSessionRepository,
   ],
