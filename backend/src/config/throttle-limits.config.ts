@@ -33,3 +33,22 @@ export const DEFAULT_THROTTLE_LIMIT: RoleThrottleLimit = {
   limit: 30,
   label: 'Public',
 };
+
+/** Tenant-level limits to prevent abuse across organizations */
+export interface TenantThrottleLimit {
+  /** Max concurrent requests per tenant */
+  limit: number;
+  /** Human-readable label */
+  label: string;
+}
+
+export const TENANT_THROTTLE_LIMITS: Record<string, TenantThrottleLimit> = {
+  // Default tenant limits - can be overridden per tenant
+  default: { limit: 1000, label: 'Default Tenant' },
+  // Emergency priority tenants get higher limits
+  emergency: { limit: 5000, label: 'Emergency Services' },
+};
+
+/** Emergency workflows get higher priority and fairness weight */
+export const EMERGENCY_ROLES = ['ADMIN', 'HOSPITAL'] as const;
+export const EMERGENCY_WEIGHT = 2; // 2x priority for emergency requests
