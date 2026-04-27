@@ -58,7 +58,7 @@ export class StorageService {
     file: Buffer,
     originalName: string,
     mimeType: string,
-    subfolder: string = 'avatars',
+    subfolder: string,
   ): Promise<StorageResult> {
     const fileExtension = path.extname(originalName);
     const fileName = `${uuidv4()}${fileExtension}`;
@@ -118,8 +118,8 @@ export class StorageService {
     );
   }
 
-  async deleteFile(key: string, bucket: string = 'local'): Promise<void> {
-    if (this.storageType === 'local' || bucket === 'local') {
+  async deleteFile(key: string, bucket?: string): Promise<void> {
+    if (this.storageType === 'local') {
       const filePath = path.join(this.uploadDir, key);
       try {
         await fs.unlink(filePath);
@@ -129,7 +129,7 @@ export class StorageService {
       return;
     }
 
-    const targetBucket = bucket !== 'local' ? bucket : this.s3Bucket;
+    const targetBucket = bucket ?? this.s3Bucket;
     const maxAttempts = 3;
     let lastError: unknown;
 
