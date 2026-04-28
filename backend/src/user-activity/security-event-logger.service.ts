@@ -14,6 +14,7 @@ export enum SecurityEventType {
   AUTH_REFRESH_TOKEN_REPLAY = 'AUTH_REFRESH_TOKEN_REPLAY',
   AUTH_SESSION_RISK_ELEVATED = 'AUTH_SESSION_RISK_ELEVATED',
   AUTH_STEP_UP_REQUIRED = 'AUTH_STEP_UP_REQUIRED',
+  TENANT_ACCESS_DENIED = 'TENANT_ACCESS_DENIED',
 }
 
 export interface SecurityEvent {
@@ -91,6 +92,7 @@ export class SecurityEventLoggerService {
         return ActivityType.AUTH_REFRESH_TOKEN_REPLAY;
       case SecurityEventType.AUTH_SESSION_RISK_ELEVATED:
       case SecurityEventType.AUTH_STEP_UP_REQUIRED:
+      case SecurityEventType.TENANT_ACCESS_DENIED:
         return ActivityType.AUTH_SESSION_RISK_ELEVATED;
       default:
         return ActivityType.AUTH_LOGIN_FAILED;

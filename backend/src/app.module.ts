@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -73,6 +74,7 @@ import { UssdModule } from './ussd/ussd.module';
 import { WorkflowModule } from './workflow/workflow.module';
 import { RoleAwareThrottlerGuard } from './throttler/role-aware-throttler.guard';
 import { throttleGetTracker } from './throttler/throttle-tracker.util';
+import { ApiCompatibilityInterceptor } from './common/versioning/api-compatibility.interceptor';
 
 import type Redis from 'ioredis';
 
@@ -212,6 +214,7 @@ import type Redis from 'ioredis';
     { provide: APP_GUARD, useClass: RoleAwareThrottlerGuard },
     /** Permission enforcement applied globally; use @RequirePermissions() to specify */
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_INTERCEPTOR, useClass: ApiCompatibilityInterceptor },
     CorrelationIdService,
   ],
 })

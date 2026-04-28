@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -16,6 +17,8 @@ import { UpdateIncidentReviewDto } from './dto/update-incident-review.dto';
 import { IncidentReviewEntity } from './entities/incident-review.entity';
 import { IncidentReviewStatus } from './enums/incident-review-status.enum';
 import { IncidentReviewClosedEvent } from './events/incident-review-closed.event';
+import { TenantActorContext, assertTenantAccess } from '../common/tenant/tenant-scope.util';
+import { SecurityEventLoggerService, SecurityEventType } from '../user-activity/security-event-logger.service';
 
 export interface IncidentTrendSummary {
   rootCause: string;
@@ -40,6 +43,7 @@ export class IncidentReviewsService {
     @InjectRepository(IncidentReviewEntity)
     private readonly reviewRepo: Repository<IncidentReviewEntity>,
     private readonly eventEmitter: EventEmitter2,
+    private readonly securityEventLogger: SecurityEventLoggerService,
   ) {}
 
   async create(
@@ -70,6 +74,7 @@ export class IncidentReviewsService {
 
   async findAll(
     query: QueryIncidentReviewDto,
+    actor: TenantActorContext,
   ): Promise<PaginatedResponse<IncidentReviewEntity>> {
     const { page = 1, pageSize = 25 } = query;
 
@@ -83,7 +88,14 @@ export class IncidentReviewsService {
     if (query.riderId) {
       qb.andWhere('review.rider_id = :riderId', { riderId: query.riderId });
     }
-    if (query.hospitalId) {
+    if (actor.organizationId && (actor.role ?? '').toLowerCase() !== 'admin') {
+      qb.andWhere(
+        '(review.hospital_id = :orgId OR review.blood_bank_id = :orgId)',
+        {
+          orgId: actor.organizationId,
+        },
+      );
+    } else if (query.hospitalId) {
       qb.andWhere('review.hospital_id = :hospitalId', {
         hospitalId: query.hospitalId,
       });
@@ -126,19 +138,21 @@ export class IncidentReviewsService {
     return PaginationUtil.createResponse(data, page, pageSize, total);
   }
 
-  async findOne(id: string): Promise<IncidentReviewEntity> {
+  async findOne(id: string, actor: TenantActorContext): Promise<IncidentReviewEntity> {
     const review = await this.reviewRepo.findOne({ where: { id } });
     if (!review) {
       throw new NotFoundException(`Incident review "${id}" not found`);
     }
+    await this.assertTenant(actor, review, 'read');
     return review;
   }
 
   async update(
     id: string,
     dto: UpdateIncidentReviewDto,
+    actor: TenantActorContext,
   ): Promise<IncidentReviewEntity> {
-    const review = await this.findOne(id);
+    const review = await this.findOne(id, actor);
 
     if (
       review.status === IncidentReviewStatus.CLOSED &&
@@ -188,13 +202,19 @@ export class IncidentReviewsService {
     endDate?: string;
     riderId?: string;
     hospitalId?: string;
+    actor: TenantActorContext;
   }): Promise<IncidentStatsSummary> {
     const qb = this.reviewRepo.createQueryBuilder('review');
 
     if (query.riderId) {
       qb.andWhere('review.rider_id = :riderId', { riderId: query.riderId });
     }
-    if (query.hospitalId) {
+    if (query.actor.organizationId && (query.actor.role ?? '').toLowerCase() !== 'admin') {
+      qb.andWhere(
+        '(review.hospital_id = :orgId OR review.blood_bank_id = :orgId)',
+        { orgId: query.actor.organizationId },
+      );
+    } else if (query.hospitalId) {
       qb.andWhere('review.hospital_id = :hospitalId', {
         hospitalId: query.hospitalId,
       });
@@ -245,5 +265,29 @@ export class IncidentReviewsService {
     }
 
     return { total, open, inReview, closed, byRootCause, bySeverity };
+  }
+
+  private async assertTenant(
+    actor: TenantActorContext,
+    review: IncidentReviewEntity,
+    action: string,
+  ): Promise<void> {
+    try {
+      assertTenantAccess(actor, {
+        resourceType: 'IncidentReview',
+        resourceId: review.id,
+        ownerIds: [review.hospitalId, review.bloodBankId],
+      });
+    } catch {
+      await this.securityEventLogger
+        .logEvent({
+          eventType: SecurityEventType.TENANT_ACCESS_DENIED,
+          userId: actor.userId,
+          description: 'Cross-tenant incident review access denied',
+          metadata: { action, incidentReviewId: review.id },
+        })
+        .catch(() => undefined);
+      throw new ForbiddenException('Cross-tenant incident review access denied');
+    }
   }
 }

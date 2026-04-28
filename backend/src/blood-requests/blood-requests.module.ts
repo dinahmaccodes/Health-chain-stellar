@@ -8,6 +8,7 @@ import { CompensationModule } from '../common/compensation/compensation.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MapsModule } from '../maps/maps.module';
+import { EscalationModule } from '../escalation/escalation.module';
 import { OrganizationEntity } from '../organizations/entities/organization.entity';
 import { ReportingModule } from '../reporting/reporting.module';
 
@@ -63,7 +64,7 @@ import { BloodRequestSagaEntity } from './entities/blood-request-saga.entity';
     NotificationsModule,
     CompensationModule,
     MapsModule,
-    forwardRef(() => ReportingModule),
+    EscalationModule,
   ],
   controllers: [BloodRequestsController, RequestQueryController],
   providers: [
