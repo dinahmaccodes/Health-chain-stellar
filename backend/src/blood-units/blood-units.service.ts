@@ -338,6 +338,13 @@ export class BloodUnitsService {
                 max: this.maxStorageTempC,
               },
             },
+            evidence: [
+              {
+                type: 'temperature_log',
+                fileId: `temp-log-${dto.unitId}-${Date.now()}`,
+                description: `Temperature reading: ${dto.temperature}C`,
+              },
+            ],
           },
           undefined,
         );

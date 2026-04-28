@@ -9,6 +9,8 @@ import { BloodUnitTrail } from '../soroban/entities/blood-unit-trail.entity';
 import { SorobanModule } from '../soroban/soroban.module';
 import { DonorEligibilityModule } from '../donor-eligibility/donor-eligibility.module';
 import { PolicyCenterModule } from '../policy-center/policy-center.module';
+import { ApprovalModule } from '../approvals/approval.module';
+import { FileMetadataModule } from '../file-metadata/file-metadata.module';
 
 import { BloodInventoryQueryService } from './blood-inventory-query.service';
 import { BloodStatusService } from './blood-status.service';
@@ -48,6 +50,8 @@ import { BloodUnitBatchService } from './batch/blood-unit-batch.service';
     NotificationsModule,
     DonorEligibilityModule,
     PolicyCenterModule,
+    ApprovalModule,
+    FileMetadataModule,
   ],
   controllers: [BloodUnitsController, DispositionController, QuarantineController],
   providers: [
