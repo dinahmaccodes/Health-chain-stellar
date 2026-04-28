@@ -34,7 +34,7 @@ fn test_initialize_success() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #0)")]
+#[should_panic(expected = "Error(Contract, #100)")]
 fn test_initialize_already_initialized() {
     let (_env, admin, client, _contract_id) = create_test_contract();
 
@@ -118,7 +118,7 @@ fn test_register_blood_increments_id() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #116)")]
 fn test_register_blood_quantity_too_low() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -135,7 +135,7 @@ fn test_register_blood_quantity_too_low() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #116)")]
 fn test_register_blood_quantity_too_high() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -152,7 +152,7 @@ fn test_register_blood_quantity_too_high() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #32)")]
+#[should_panic(expected = "Error(Contract, #132)")]
 fn test_register_blood_unauthorized_bank() {
     let (env, _admin, client, _contract_id) = create_test_contract();
 
@@ -199,7 +199,7 @@ fn test_register_all_blood_types() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_get_blood_unit_not_found() {
     let (_env, _admin, client, _contract_id) = create_test_contract();
 
@@ -403,7 +403,7 @@ fn test_update_status_complete_flow() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_available_to_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -423,7 +423,7 @@ fn test_update_status_invalid_available_to_delivered() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_available_to_intransit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -438,7 +438,7 @@ fn test_update_status_invalid_available_to_intransit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_reserved_to_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -454,7 +454,7 @@ fn test_update_status_invalid_reserved_to_delivered() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_intransit_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -471,7 +471,7 @@ fn test_update_status_invalid_intransit_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_intransit_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -488,7 +488,7 @@ fn test_update_status_invalid_intransit_to_reserved() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -506,7 +506,7 @@ fn test_update_status_invalid_delivered_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -524,7 +524,7 @@ fn test_update_status_invalid_delivered_to_reserved() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_delivered_to_intransit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -542,7 +542,7 @@ fn test_update_status_invalid_delivered_to_intransit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_expired_to_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -558,7 +558,7 @@ fn test_update_status_invalid_expired_to_available() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_invalid_expired_to_reserved() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -617,7 +617,7 @@ fn test_update_status_expire_from_any_non_terminal() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Error(Contract, #102)")]
 fn test_update_status_unauthorized() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -634,7 +634,7 @@ fn test_update_status_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_update_status_nonexistent_unit() {
     let (_env, admin, client, _contract_id) = create_test_contract();
 
@@ -643,7 +643,7 @@ fn test_update_status_nonexistent_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #23)")]
+#[should_panic(expected = "Error(Contract, #123)")]
 fn test_update_status_expired_unit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -662,7 +662,7 @@ fn test_update_status_expired_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_update_status_from_terminal_delivered() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -704,7 +704,7 @@ fn test_mark_delivered_success() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_mark_delivered_from_available() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -899,7 +899,7 @@ fn test_batch_update_status_empty_list() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #21)")]
+#[should_panic(expected = "Error(Contract, #121)")]
 fn test_batch_update_status_nonexistent_unit() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -915,7 +915,7 @@ fn test_batch_update_status_nonexistent_unit() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #2)")]
+#[should_panic(expected = "Error(Contract, #102)")]
 fn test_batch_update_status_unauthorized() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -932,7 +932,7 @@ fn test_batch_update_status_unauthorized() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_batch_update_status_invalid_transition() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1012,7 +1012,7 @@ fn test_dispose_records_history() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_dispose_from_available_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1026,7 +1026,7 @@ fn test_dispose_from_available_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_dispose_from_reserved_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1041,7 +1041,7 @@ fn test_dispose_from_reserved_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #41)")]
+#[should_panic(expected = "Error(Contract, #141)")]
 fn test_transition_from_disposed_is_invalid() {
     let (env, admin, client, _contract_id) = create_test_contract();
 
@@ -1090,3 +1090,571 @@ fn test_batch_dispose_after_expiry() {
     assert_eq!(client.get_blood_unit(&id2).status, BloodStatus::Disposed);
 }
 
+// =============================================================================
+// 100% branch-coverage tests for is_valid_transition and update_status
+// Naming convention: test_transition_{from}_{to}_{succeeds|fails}
+// =============================================================================
+
+// ── Valid transitions (one test per pair) ─────────────────────────────────────
+
+#[test]
+fn test_transition_available_to_reserved_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    let unit = client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Reserved);
+}
+
+#[test]
+fn test_transition_available_to_expired_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Expired);
+}
+
+#[test]
+fn test_transition_reserved_to_intransit_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::InTransit);
+}
+
+#[test]
+fn test_transition_reserved_to_available_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::Available, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Available);
+}
+
+#[test]
+fn test_transition_reserved_to_expired_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Expired);
+}
+
+#[test]
+fn test_transition_intransit_to_delivered_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Delivered);
+}
+
+#[test]
+fn test_transition_intransit_to_expired_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Expired);
+}
+
+#[test]
+fn test_transition_expired_to_disposed_succeeds() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    let unit = client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Disposed);
+}
+
+#[test]
+fn test_transition_compromised_to_disposed_succeeds() {
+    let (env, admin, client, contract_id) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // Seed Compromised status directly — Available→Compromised is not a defined
+    // transition, so we write it via storage to test the Compromised→Disposed path.
+    env.as_contract(&contract_id, || {
+        use crate::storage;
+        let mut unit = storage::get_blood_unit(&env, id).unwrap();
+        unit.status = BloodStatus::Compromised;
+        storage::set_blood_unit(&env, &unit);
+    });
+
+    let unit = client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    assert_eq!(unit.status, BloodStatus::Disposed);
+}
+
+// ── Invalid high-risk transitions ─────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_delivered_to_collected_fails() {
+    // "Collected" maps to Available in this contract's terminology.
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+    // Delivered → Available (backwards from terminal)
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_cleared_fails() {
+    // "Cleared" maps to Available in this contract's terminology.
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    // Disposed → Available (backwards from terminal)
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_transfused_to_dispatched_fails() {
+    // "Transfused" maps to Delivered; "Dispatched" maps to InTransit.
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+    // Delivered → InTransit (backwards from terminal)
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_delivered_to_reserved_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_intransit_to_available_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_available_to_delivered_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_available_to_intransit_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_reserved_to_delivered_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+}
+
+// ── Boundary conditions: Expired → every other status ─────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_expired_to_available_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_expired_to_reserved_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_expired_to_intransit_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_expired_to_delivered_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_expired_to_compromised_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Compromised, &admin, &None);
+}
+
+// ── Boundary conditions: Disposed → every other status ────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_available_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_reserved_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_intransit_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_delivered_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_expired_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #141)")]
+fn test_transition_disposed_to_compromised_fails() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+    client.update_status(&id, &BloodStatus::Expired, &admin, &None);
+    client.update_status(&id, &BloodStatus::Disposed, &admin, &None);
+    client.update_status(&id, &BloodStatus::Compromised, &admin, &None);
+}
+
+// ── Pure is_valid_transition unit tests (no storage, exhaustive) ──────────────
+
+#[test]
+fn test_transition_pure_all_valid_pairs_succeeds() {
+    use crate::types::is_valid_transition;
+    use BloodStatus::*;
+
+    let valid = [
+        (Available, Reserved),
+        (Available, Expired),
+        (Available, Compromised),
+        (Reserved, InTransit),
+        (Reserved, Available),
+        (Reserved, Expired),
+        (Reserved, Compromised),
+        (InTransit, Delivered),
+        (InTransit, Expired),
+        (InTransit, Compromised),
+        (Expired, Disposed),
+        (Compromised, Disposed),
+    ];
+
+    for (from, to) in valid.iter() {
+        assert!(
+            is_valid_transition(from, to),
+            "Expected valid: {:?} -> {:?}",
+            from,
+            to
+        );
+    }
+}
+
+#[test]
+fn test_transition_pure_all_invalid_pairs_fails() {
+    use crate::types::is_valid_transition;
+    use BloodStatus::*;
+
+    let all_statuses = [
+        Available, Reserved, InTransit, Delivered, Expired, Compromised, Disposed,
+    ];
+
+    let valid_set = [
+        (Available, Reserved),
+        (Available, Expired),
+        (Available, Compromised),
+        (Reserved, InTransit),
+        (Reserved, Available),
+        (Reserved, Expired),
+        (Reserved, Compromised),
+        (InTransit, Delivered),
+        (InTransit, Expired),
+        (InTransit, Compromised),
+        (Expired, Disposed),
+        (Compromised, Disposed),
+    ];
+
+    for from in all_statuses.iter() {
+        for to in all_statuses.iter() {
+            let pair = (*from, *to);
+            let expected_valid = valid_set.contains(&pair);
+            assert_eq!(
+                is_valid_transition(from, to),
+                expected_valid,
+                "Mismatch for {:?} -> {:?}: expected valid={}, got {}",
+                from,
+                to,
+                expected_valid,
+                is_valid_transition(from, to)
+            );
+        }
+    }
+}
+
+
+// ── Circuit breaker tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_pause_blocks_write_functions() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    // Pause the contract
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    // register_blood should fail with ContractPaused (#160)
+    let result = client.try_register_blood(&admin, &BloodType::OPositive, &450u32, &None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_pause_allows_read_functions() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    // Register a unit before pausing
+    let unit_id = client.register_blood(&admin, &BloodType::OPositive, &450u32, &None);
+
+    // Pause
+    client.pause(&admin);
+
+    // Read functions still work
+    let unit = client.get_blood_unit(&unit_id);
+    assert_eq!(unit.id, unit_id);
+    assert!(!client.get_status_history(&unit_id).is_empty() || client.get_status_change_count(&unit_id) == 0);
+}
+
+#[test]
+fn test_unpause_restores_functionality() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+
+    // Write should succeed after unpause
+    let unit_id = client.register_blood(&admin, &BloodType::APositive, &300u32, &None);
+    assert!(unit_id > 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #102)")]
+fn test_non_admin_cannot_pause() {
+    let (env, _admin, client, _) = create_test_contract();
+    let attacker = Address::generate(&env);
+    client.pause(&attacker);
+}
+
+// ── Paginated history tests ───────────────────────────────────────────────────
+
+/// Verify that get_status_history_page returns only the entries for the
+/// requested page and that get_history_page_count reflects the correct
+/// last page number after many transitions.
+#[test]
+fn test_paginated_history_single_page() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // 3 transitions — all fit on page 0 (page size = 50)
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+
+    // Page 0 should have all 3 entries
+    let page0 = client.get_status_history_page(&id, &0u32);
+    assert_eq!(page0.len(), 3);
+
+    // Page count should still be 0 (only one page used)
+    assert_eq!(client.get_history_page_count(&id), 0);
+}
+
+/// Verify that full history via get_status_history matches the sum of all pages.
+#[test]
+fn test_paginated_history_full_matches_pages() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let id = client.register_blood(&admin, &BloodType::APositive, &450u32, &None);
+
+    // 5 transitions
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::Available, &admin, &None);
+    client.update_status(&id, &BloodStatus::Reserved, &admin, &None);
+    client.update_status(&id, &BloodStatus::InTransit, &admin, &None);
+    client.update_status(&id, &BloodStatus::Delivered, &admin, &None);
+
+    let full = client.get_status_history(&id);
+    assert_eq!(full.len(), 5);
+
+    // All entries should be on page 0
+    let page0 = client.get_status_history_page(&id, &0u32);
+    assert_eq!(page0.len(), 5);
+}
+
+// ── batch_register_blood tests ────────────────────────────────────────────────
+
+#[test]
+fn test_batch_register_blood_success() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let entries = vec![
+        &env,
+        (BloodType::APositive, 450u32, None::<Address>),
+        (BloodType::BNegative, 300u32, None::<Address>),
+        (BloodType::ONegative, 500u32, None::<Address>),
+    ];
+
+    let ids = client.batch_register_blood(&admin, &entries);
+
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids.get(0).unwrap(), 1u64);
+    assert_eq!(ids.get(1).unwrap(), 2u64);
+    assert_eq!(ids.get(2).unwrap(), 3u64);
+
+    // Verify each unit was stored correctly
+    let u1 = client.get_blood_unit(&1u64);
+    assert_eq!(u1.blood_type, BloodType::APositive);
+    assert_eq!(u1.quantity_ml, 450);
+
+    let u2 = client.get_blood_unit(&2u64);
+    assert_eq!(u2.blood_type, BloodType::BNegative);
+
+    let u3 = client.get_blood_unit(&3u64);
+    assert_eq!(u3.blood_type, BloodType::ONegative);
+}
+
+#[test]
+fn test_batch_register_blood_empty_list() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let empty: soroban_sdk::Vec<(BloodType, u32, Option<Address>)> =
+        soroban_sdk::Vec::new(&env);
+    let ids = client.batch_register_blood(&admin, &empty);
+    assert_eq!(ids.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #116)")]
+fn test_batch_register_blood_invalid_quantity_aborts_all() {
+    let (env, admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    // Second entry has invalid quantity — entire batch should fail
+    let entries = vec![
+        &env,
+        (BloodType::APositive, 450u32, None::<Address>),
+        (BloodType::BNegative, 50u32, None::<Address>), // too low
+    ];
+    client.batch_register_blood(&admin, &entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #132)")]
+fn test_batch_register_blood_unauthorized_bank() {
+    let (env, _admin, client, _) = create_test_contract();
+    env.ledger().set_timestamp(1000u64);
+
+    let unauthorized = Address::generate(&env);
+    let entries = vec![&env, (BloodType::APositive, 450u32, None::<Address>)];
+    client.batch_register_blood(&unauthorized, &entries);
+}

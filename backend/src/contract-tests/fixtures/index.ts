@@ -34,10 +34,20 @@ export {
   ValidAuthorizationInteraction,
 } from './auth.fixture';
 
+import { BloodRequestsInventoryContract } from './blood-requests-inventory.fixture';
+import { BloodRequestsSorobanContract } from './blood-requests-soroban.fixture';
+import { DispatchRidersContract } from './dispatch-riders.fixture';
+import { AuthContract } from './auth.fixture';
+
 /**
  * Get contract by name
  */
 export function getContractByName(name: string) {
-  const contracts = [BloodRequestsInventoryContract, BloodRequestsSorobanContract, DispatchRidersContract, AuthContract];
+  const contracts = [
+    BloodRequestsInventoryContract,
+    BloodRequestsSorobanContract,
+    DispatchRidersContract,
+    AuthContract,
+  ];
   return contracts.find((c) => c.name === name);
 }

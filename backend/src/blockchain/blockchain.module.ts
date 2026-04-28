@@ -1,4 +1,4 @@
-import { BullModule } from '@nestjs/bull';
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -6,12 +6,18 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CompensationModule } from '../common/compensation/compensation.module';
 
 import { BlockchainController } from './controllers/blockchain.controller';
+import { FailedSorobanTxEntity } from './entities/failed-soroban-tx.entity';
+import { OnChainTxStateEntity } from './entities/on-chain-tx-state.entity';
 import { AdminGuard } from './guards/admin.guard';
+import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 import { SorobanDlqProcessor } from './processors/soroban-dlq.processor';
 import { SorobanTxProcessor } from './processors/soroban-tx.processor';
+import { BlockchainHealthService } from './services/blockchain-health.service';
+import { ConfirmationService } from './services/confirmation.service';
+import { FailedSorobanTxService } from './services/failed-soroban-tx.service';
 import { IdempotencyService } from './services/idempotency.service';
+import { QueueMetricsService } from './services/queue-metrics.service';
 import { SorobanService } from './services/soroban.service';
-import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
 
 @Module({
   imports: [
@@ -25,41 +31,53 @@ import { JobDeduplicationPlugin } from './plugins/job-deduplication.plugin';
       }),
     }),
     CompensationModule,
-    BullModule.registerQueue(
+    EventEmitterModule.forRoot(),
+    TypeOrmModule.forFeature([FailedSorobanTxEntity, OnChainTxStateEntity]),
+    BullModule.registerQueueAsync(
       {
         name: 'soroban-tx-queue',
-        redis: {
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379'),
-        },
-        defaultJobOptions: {
-          attempts: 5,
-          backoff: {
-            type: 'exponential',
-            delay: 1000,
+        useFactory: (configService: ConfigService) => ({
+          connection: {
+            host: configService.get<string>('REDIS_HOST'),
+            port: configService.get<number>('REDIS_PORT'),
           },
-          removeOnComplete: true,
-          removeOnFail: false,
-        },
+          defaultJobOptions: {
+            attempts: 5,
+            backoff: {
+              type: 'exponential',
+              delay: 1000,
+            },
+            removeOnComplete: true,
+            removeOnFail: false,
+          },
+        }),
+        inject: [ConfigService],
       },
       {
         name: 'soroban-dlq',
-        redis: {
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379'),
-        },
+        useFactory: (configService: ConfigService) => ({
+          connection: {
+            host: configService.get<string>('REDIS_HOST'),
+            port: configService.get<number>('REDIS_PORT'),
+          },
+        }),
+        inject: [ConfigService],
       },
     ),
   ],
   providers: [
     SorobanService,
+    ConfirmationService,
     IdempotencyService,
     JobDeduplicationPlugin,
     SorobanTxProcessor,
     SorobanDlqProcessor,
+    FailedSorobanTxService,
+    BlockchainHealthService,
+    QueueMetricsService,
     AdminGuard,
   ],
   controllers: [BlockchainController],
-  exports: [SorobanService],
+  exports: [SorobanService, QueueMetricsService],
 })
 export class BlockchainModule {}
