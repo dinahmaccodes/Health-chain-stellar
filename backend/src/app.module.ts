@@ -6,6 +6,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
@@ -86,6 +87,7 @@ import type Redis from 'ioredis';
     AppConfigModule,
 
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
 
     // Global BullMQ Redis connection — individual modules register their own queues
     BullModule.forRootAsync({
