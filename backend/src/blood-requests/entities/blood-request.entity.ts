@@ -5,7 +5,7 @@ import {
   JoinColumn,
   ManyToOne,
   OneToMany,
-  Index,
+  PrimaryGeneratedColumn,
 } from 'typeorm';
 
 import { BloodComponent } from '../../blood-units/enums/blood-component.enum';
